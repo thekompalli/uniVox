@@ -190,7 +190,9 @@ cython_debug/
 # Machine Learning Models and Data
 # ==============================================================================
 # Large model files
-models/
+# Local models directory at repo root (keep tracked code under src/models)
+/models/
+!src/models/**
 *.pt
 *.pth
 *.bin
