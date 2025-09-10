@@ -1,10 +1,10 @@
-# PS-06 Competition System
+# UniVox
 
 **Language Agnostic Speaker Identification & Diarization; and subsequent Transcription & Translation System**
 
 A comprehensive audio processing system designed for the PS-06 Grand Challenge competition, providing offline speaker identification, diarization, language identification, automatic speech recognition, and neural machine translation for multilingual audio files.
 
-## 🎯 Overview
+## Overview
 
 This system transforms spoken audio into structured, multilingual textual insights through an integrated pipeline that supports:
 
@@ -14,7 +14,7 @@ This system transforms spoken audio into structured, multilingual textual insigh
 - **Automatic Speech Recognition**: Convert speech to text in original languages
 - **Neural Machine Translation**: Translate transcripts to English
 
-## 🏆 Competition Requirements
+## Requirements
 
 ### Supported Languages
 - **Stage 1**: English, Hindi, Punjabi
@@ -34,7 +34,7 @@ This system transforms spoken audio into structured, multilingual textual insigh
 - BLEU Score: >30
 - Real-time Factor: <2x
 
-## 🏗️ Architecture
+## Structure
 
 ```
 ps06_system/
@@ -53,7 +53,7 @@ ps06_system/
 └── tests/                      # Test suite
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Python 3.9+
@@ -106,7 +106,7 @@ docker-compose up --build
 curl http://localhost:8000/api/v1/health
 ```
 
-## 📖 API Usage
+## API Usage
 
 ### Process Audio File
 
@@ -143,7 +143,7 @@ results = requests.get(f'http://localhost:8000/api/v1/result/{job_id}')
 print(results.json())
 ```
 
-## 🔧 Configuration
+## Configuration
 
 ### Environment Variables
 
@@ -174,7 +174,7 @@ Edit `configs/model_configs/` files to customize model parameters:
 - `pyannote_config.yaml` - Diarization parameters  
 - `indictrans_config.yaml` - Translation settings
 
-## 🧪 Testing
+## Testing
 
 ```bash
 # Run all tests
@@ -187,7 +187,7 @@ pytest tests/test_services/test_asr_service.py -v
 pytest --cov=src tests/
 ```
 
-## 📊 Monitoring
+## Monitoring
 
 ### Health Checks
 
@@ -208,20 +208,6 @@ curl http://localhost:8000/api/v1/metrics
 - **Metrics**: `logs/ps06_performance.log`
 - **Audit**: `logs/ps06_audit.log`
 
-## 🏁 Competition Submission
-
-### Generate Submission Package
-
-```python
-from src.services.format_service import FormatService
-
-format_service = FormatService()
-package_path = await format_service.create_submission_package(
-    job_id="your-job-id",
-    evaluation_id="01"
-)
-```
-
 ### Output Files
 
 The system generates competition-compliant output files:
@@ -233,7 +219,7 @@ The system generates competition-compliant output files:
 - `NMT_XX.txt` - Translation results
 - `PS_06_<app_id>_<eval_id>.hash` - Solution verification hash
 
-## 🔬 Model Details
+## Model Details
 
 ### Core Models
 
@@ -254,7 +240,7 @@ The system generates competition-compliant output files:
 - **Model caching** and warm-up
 - **Batch processing** for efficiency
 
-## 🛠️ Development
+## Development
 
 ### Project Structure
 
@@ -287,7 +273,7 @@ from src.utils.format_utils import FormatUtils
 3. Update service layer integration
 4. Add tests
 
-## 📝 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -319,7 +305,7 @@ PROCESSING_TIMEOUT=1800
 - Use faster storage (SSD) for model loading
 
 
-## 🤝 Contributing (internal only with Flyers Soft)
+## Contributing (internal only with Flyers Soft)
 
 1. Fork the repository
 2. Create a feature branch
@@ -327,15 +313,7 @@ PROCESSING_TIMEOUT=1800
 4. Ensure all tests pass
 5. Submit a pull request
 
-## 📞 Support
-
-For technical support and questions:
-
-- **Issues**: Use GitHub Issues for bug reports
-- **Discussions**: Use GitHub Discussions for questions
-- **Email**: [contact information]
-
-## 📈 Roadmap
+## Roadmap
 
 - [ ] Support for additional Indian languages
 - [ ] Real-time streaming processing
