@@ -1,0 +1,142 @@
+{
+  "info": {
+    "name": "PS-06 API (Local/Dev)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8000/api/v1" },
+    { "key": "job_id", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health - Basic",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Accept", "value": "application/json" } ],
+            "url": { "raw": "{{baseUrl}}/health" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Health endpoint returns 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "pm.test('Health status present', function () { pm.expect(json).to.have.property('data') || pm.expect(json).to.have.property('status'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Health - Detailed",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Accept", "value": "application/json" } ],
+            "url": { "raw": "{{baseUrl}}/health/detailed" }
+          }
+        },
+        {
+          "name": "Metrics",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Accept", "value": "application/json" } ],
+            "url": { "raw": "{{baseUrl}}/metrics" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Processing",
+      "item": [
+        {
+          "name": "Process Audio (upload)",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Accept", "value": "application/json" } ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "audio_file", "type": "file", "src": "", "description": "Choose an audio file (wav/mp3/flac/ogg/m4a)" },
+                { "key": "languages", "type": "text", "value": "english,hindi" },
+                { "key": "quality_mode", "type": "text", "value": "balanced" },
+                { "key": "enable_overlaps", "type": "text", "value": "true", "disabled": true },
+                { "key": "min_segment_duration", "type": "text", "value": "0.5", "disabled": true },
+                { "key": "speaker_gallery", "type": "text", "value": "", "disabled": true }
+              ]
+            },
+            "url": { "raw": "{{baseUrl}}/process" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Process returns 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "const jobId = (json && json.data && (json.data.job_id || json.data.id)) || json.job_id;",
+                  "pm.collectionVariables.set('job_id', jobId);",
+                  "pm.environment.set('job_id', jobId);",
+                  "pm.test('job_id captured', function () { pm.expect(jobId).to.be.a('string'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Job Status",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Accept", "value": "application/json" } ],
+            "url": { "raw": "{{baseUrl}}/status/{{job_id}}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status returns 200', function () { pm.response.to.have.status(200); });",
+                  "const json = pm.response.json();",
+                  "const status = (json.data && (json.data.status || json.data.state)) || json.status;",
+                  "pm.collectionVariables.set('last_status', status);",
+                  "pm.test('status present', function () { pm.expect(status).to.be.a('string'); });"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Result",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Accept", "value": "application/json" } ],
+            "url": { "raw": "{{baseUrl}}/result/{{job_id}}" }
+          }
+        },
+        {
+          "name": "List Jobs",
+          "request": {
+            "method": "GET",
+            "header": [ { "key": "Accept", "value": "application/json" } ],
+            "url": { "raw": "{{baseUrl}}/jobs?limit=10&offset=0" }
+          }
+        },
+        {
+          "name": "Cancel Job",
+          "request": {
+            "method": "DELETE",
+            "header": [ { "key": "Accept", "value": "application/json" } ],
+            "url": { "raw": "{{baseUrl}}/job/{{job_id}}" }
+          }
+        }
+      ]
+    }
+  ]
+}
+

@@ -1,0 +1,355 @@
+# IndicTrans2 Translation Configuration for PS-06 Competition System
+
+indictrans2:
+  # Model selection
+  model_name: "ai4bharat/indictrans2-en-indic-1B"
+  model_size: "1B"  # 200M, 1B
+  model_type: "en-indic"  # en-indic, indic-en, indic-indic
+  
+  # Alternative models for different directions
+  models:
+    en_to_indic: "ai4bharat/indictrans2-en-indic-1B"
+    indic_to_en: "ai4bharat/indictrans2-indic-en-1B"
+    indic_to_indic: "ai4bharat/indictrans2-indic-indic-1B"
+  
+  # Device configuration
+  device: "cuda"  # cuda, cpu, auto
+  device_index: 0
+  dtype: "float16"  # float16, float32, bfloat16
+  
+  # Model loading
+  loading:
+    load_in_8bit: false
+    load_in_4bit: false
+    use_flash_attention: true
+    torch_dtype: "auto"
+    trust_remote_code: false
+    
+  # Tokenization settings
+  tokenization:
+    max_input_length: 512
+    max_output_length: 512
+    padding: "max_length"
+    truncation: true
+    return_tensors: "pt"
+    
+    # Language codes
+    source_prefix: true  # Add source language prefix
+    target_prefix: true  # Add target language prefix
+    
+  # Generation parameters
+  generation:
+    max_length: 512
+    max_new_tokens: 512
+    min_length: 1
+    
+    # Beam search
+    num_beams: 4
+    num_beam_groups: 1
+    diversity_penalty: 0.0
+    early_stopping: true
+    
+    # Sampling (not used with beam search)
+    do_sample: false
+    temperature: 1.0
+    top_k: 50
+    top_p: 1.0
+    
+    # Repetition control
+    repetition_penalty: 1.0
+    no_repeat_ngram_size: 0
+    
+    # Length control
+    length_penalty: 1.0
+    
+    # Special tokens
+    pad_token_id: null  # Will be set from tokenizer
+    eos_token_id: null  # Will be set from tokenizer
+    
+  # Batch processing
+  batch_processing:
+    batch_size: 8
+    max_batch_size: 32
+    dynamic_batching: true
+    sort_by_length: true
+    
+  # Language support
+  languages:
+    # Source languages (Indian languages to English)
+    source_languages:
+      hindi: "hin_Deva"
+      bengali: "ben_Beng"
+      punjabi: "pan_Guru"
+      nepali: "nep_Deva"
+      dogri: "doi_Deva"
+      
+    # Target languages
+    target_languages:
+      english: "eng_Latn"
+      
+    # Fallback mappings
+    fallback_codes:
+      dogri: "hin_Deva"  # Use Hindi for Dogri as fallback
+      
+  # Preprocessing
+  preprocessing:
+    # Text normalization
+    normalize_text: true
+    remove_extra_spaces: true
+    normalize_quotes: true
+    normalize_dashes: true
+    
+    # Script normalization
+    script_normalization:
+      devanagari: true
+      bengali: true
+      gurmukhi: true
+      
+    # Language-specific preprocessing
+    language_specific:
+      hindi:
+        normalize_numerals: true
+        remove_diacritics: false
+        
+      bengali:
+        normalize_conjuncts: true
+        remove_diacritics: false
+        
+      punjabi:
+        normalize_bindi_tippi: true
+        remove_diacritics: false
+        
+  # Postprocessing
+  postprocessing:
+    # Text cleaning
+    clean_output: true
+    remove_extra_spaces: true
+    fix_punctuation: true
+    capitalize_sentences: true
+    
+    # Quality filtering
+    quality_filtering:
+      enable: true
+      min_length: 1
+      max_length: 1000
+      min_translation_ratio: 0.1
+      max_translation_ratio: 5.0
+      
+    # Language detection on output
+    output_language_check: true
+    expected_language: "english"
+    
+  # Quality assessment
+  quality:
+    # Confidence estimation
+    confidence_estimation: true
+    confidence_method: "entropy"  # entropy, probability, length_penalty
+    
+    # Translation quality metrics
+    quality_metrics:
+      enable: true
+      compute_bleu: true
+      compute_rouge: false
+      compute_bertscore: false
+      
+    # Thresholds
+    thresholds:
+      min_confidence: 0.3
+      min_bleu_score: 10.0
+      
+  # Fallback translation
+  fallback:
+    enable: true
+    # Use NLLB as fallback
+    fallback_model: "nllb"
+    fallback_threshold: 0.5
+    
+  # Caching
+  caching:
+    enable: true
+    cache_size: 1000
+    cache_ttl: 3600  # seconds
+    cache_translations: true
+    
+  # Performance optimization
+  optimization:
+    # Compilation
+    torch_compile: false
+    compile_mode: "default"
+    
+    # Memory optimization
+    gradient_checkpointing: false
+    use_cache: true
+    
+    # Inference optimization
+    static_kvargs: false
+    use_better_transformer: true
+    
+  # Competition-specific settings
+  competition:
+    # PS-06 requirements
+    output_format: "competition"
+    preserve_speaker_segments: true
+    include_confidence: true
+    
+    # Performance targets
+    target_bleu_score: 30.0  # BLEU score > 30
+    target_rtf: 1.0  # Real-time factor < 1x for translation
+    
+    # Quality requirements
+    min_translation_quality: 0.7
+    validate_output: true
+    
+  # Logging and monitoring
+  logging:
+    log_level: "INFO"
+    log_translations: false  # Don't log translations (privacy)
+    log_performance: true
+    log_errors: true
+    
+    # Statistics
+    collect_statistics: true
+    log_language_distribution: true
+    log_quality_metrics: true
+
+# NLLB Configuration (fallback model)
+nllb:
+  model_name: "facebook/nllb-200-distilled-600M"
+  model_size: "600M"  # 600M, 1.3B, 3.3B
+  
+  device: "cuda"
+  dtype: "float16"
+  
+  # Generation parameters
+  generation:
+    max_length: 400
+    num_beams: 4
+    early_stopping: true
+    length_penalty: 1.0
+    
+  # Language codes
+  languages:
+    english: "eng_Latn"
+    hindi: "hin_Deva"
+    bengali: "ben_Beng"
+    punjabi: "pan_Guru"
+    nepali: "nep_Deva"
+    # Use Hindi for Dogri
+    dogri: "hin_Deva"
+    
+  batch_size: 16
+
+# Marian Models (for specific language pairs if needed)
+marian:
+  models:
+    # Example: specific language pair models
+    hindi_english: "Helsinki-NLP/opus-mt-hi-en"
+    bengali_english: "Helsinki-NLP/opus-mt-bn-en"
+    
+  generation:
+    max_length: 512
+    num_beams: 4
+    
+  batch_size: 16
+
+# Environment-specific configurations
+environments:
+  development:
+    batch_processing:
+      batch_size: 4
+    generation:
+      num_beams: 2
+    logging:
+      log_level: "DEBUG"
+      log_translations: true
+      
+  production:
+    batch_processing:
+      batch_size: 32
+      dynamic_batching: true
+    generation:
+      num_beams: 4
+    optimization:
+      torch_compile: true
+    logging:
+      log_level: "WARNING"
+      log_translations: false
+      
+  testing:
+    batch_processing:
+      batch_size: 2
+    generation:
+      num_beams: 1
+    logging:
+      log_level: "DEBUG"
+
+# Model variants
+variants:
+  fast:
+    generation:
+      num_beams: 1
+      max_length: 256
+    batch_processing:
+      batch_size: 32
+      
+  balanced:
+    generation:
+      num_beams: 4
+      max_length: 512
+    batch_processing:
+      batch_size: 16
+      
+  accurate:
+    generation:
+      num_beams: 8
+      max_length: 512
+      length_penalty: 1.2
+    batch_processing:
+      batch_size: 8
+    quality:
+      min_confidence: 0.5
+      
+  multilingual:
+    # Optimized for handling multiple languages
+    preprocessing:
+      normalize_text: true
+      script_normalization:
+        devanagari: true
+        bengali: true
+        gurmukhi: true
+    fallback:
+      enable: true
+      fallback_threshold: 0.3
+
+# Advanced features
+advanced:
+  # Fine-tuning capabilities
+  fine_tuning:
+    enable: false
+    domain_adaptation: false
+    few_shot_learning: false
+    
+  # Multi-step translation
+  multi_step:
+    enable: false
+    pivot_language: "english"
+    
+  # Context-aware translation
+  context_aware:
+    enable: false
+    context_window: 3  # sentences
+    
+  # Custom dictionaries
+  custom_dictionaries:
+    enable: false
+    domain_specific: false
+    
+  # Translation memory
+  translation_memory:
+    enable: false
+    fuzzy_matching: false
+    
+  # Post-editing
+  post_editing:
+    enable: false
+    automatic_post_editing: false

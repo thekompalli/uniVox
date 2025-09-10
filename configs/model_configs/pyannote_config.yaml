@@ -1,0 +1,303 @@
+# PyAnnote.audio Diarization Configuration for PS-06 Competition System
+
+pyannote:
+  # Model selection
+  diarization_model: "pyannote/speaker-diarization-3.1"
+  segmentation_model: "pyannote/segmentation-3.0"
+  embedding_model: "pyannote/embedding"
+  
+  # Authentication
+  huggingface_token: null  # Set via environment variable
+  
+  # Device configuration
+  device: "cuda"  # cuda, cpu, auto
+  device_index: 0
+  
+  # Diarization pipeline settings
+  diarization:
+    # Speaker counting
+    min_speakers: 1
+    max_speakers: 10
+    num_speakers: null  # Auto-detect if null
+    
+    # Clustering parameters
+    clustering:
+      method: "AgglomerativeClustering"  # AgglomerativeClustering, SpectralClustering
+      threshold: 0.7  # Distance threshold for clustering
+      min_cluster_size: 10  # Minimum cluster size in seconds
+      
+    # Segmentation parameters
+    segmentation:
+      step: 0.1  # Step size in seconds
+      window: 2.0  # Window size in seconds
+      batch_size: 32
+      
+    # Voice Activity Detection
+    vad:
+      onset: 0.5  # Voice activity onset threshold
+      offset: 0.5  # Voice activity offset threshold
+      min_duration_on: 0.0  # Minimum duration for voice activity
+      min_duration_off: 0.0  # Minimum duration for silence
+      
+    # Overlap detection
+    overlap:
+      enable: true
+      threshold: 0.5
+      min_overlap_duration: 0.1  # seconds
+      
+  # Speaker embedding extraction
+  embedding:
+    batch_size: 32
+    chunk_duration: 3.0  # seconds
+    step: 1.5  # seconds
+    normalize: true
+    
+    # Feature extraction
+    features:
+      sample_rate: 16000
+      window_size: 25  # ms
+      hop_length: 10  # ms
+      n_mfcc: 13
+      
+  # Audio preprocessing
+  audio:
+    sample_rate: 16000
+    mono: true
+    normalize: true
+    remove_silence: false
+    
+    # Enhancement
+    enhancement:
+      enable: false
+      noise_reduction: false
+      gain_normalization: true
+      
+  # Postprocessing
+  postprocess:
+    # Minimum segment duration
+    min_segment_duration: 0.5  # seconds
+    
+    # Collar for evaluation (not applied to output)
+    collar: 0.25  # seconds
+    
+    # Merge close segments
+    merge_segments:
+      enable: true
+      max_gap: 0.5  # seconds
+      
+    # Filter segments
+    filter_segments:
+      min_confidence: 0.3
+      min_speech_duration: 0.1
+      
+    # Speaker label consistency
+    consistency:
+      enable: true
+      min_speaker_duration: 5.0  # seconds
+      relabel_short_segments: true
+      
+  # Performance optimization
+  optimization:
+    use_half_precision: true
+    batch_inference: true
+    cache_embeddings: true
+    parallel_extraction: true
+    
+  # Memory management
+  memory:
+    max_memory_gb: 8
+    clear_cache_frequency: 50  # Clear after N files
+    chunk_processing: true
+    
+  # Quality control
+  quality:
+    # Confidence scoring
+    confidence_scoring: true
+    min_confidence_threshold: 0.5
+    
+    # Consistency checks
+    consistency_checks:
+      enable: true
+      max_speaker_changes_per_minute: 10
+      min_speaker_consistency: 0.7
+      
+    # Validation
+    validate_output: true
+    check_temporal_consistency: true
+    
+  # Competition-specific settings
+  competition:
+    # PS-06 requirements
+    output_format: "competition"
+    include_confidence: true
+    include_overlaps: true
+    
+    # Performance targets
+    target_der: 0.20  # Diarization Error Rate < 20%
+    target_identification_accuracy: 0.85  # > 85%
+    
+    # Time constraints
+    max_processing_time_factor: 2.0  # Max 2x real-time
+    
+  # Speaker identification
+  speaker_identification:
+    enable: true
+    
+    # Gallery management
+    gallery:
+      max_speakers: 100
+      embedding_dimension: 512
+      similarity_metric: "cosine"  # cosine, euclidean
+      
+    # Matching parameters
+    matching:
+      threshold: 0.7  # Similarity threshold for identification
+      min_segment_duration: 1.0  # Minimum segment for identification
+      ensemble_method: "average"  # average, voting, max
+      
+    # Enrollment
+    enrollment:
+      min_duration: 5.0  # Minimum duration for enrollment
+      max_segments: 10  # Maximum segments to use for enrollment
+      quality_threshold: 0.8
+      
+  # Logging and debugging
+  logging:
+    log_level: "INFO"
+    log_timings: true
+    log_statistics: true
+    save_intermediate_results: false
+    
+    # Visualization
+    visualization:
+      enable: false
+      save_plots: false
+      plot_format: "png"
+      
+  # Language-specific tuning
+  languages:
+    english:
+      # No specific tuning needed
+      pass
+      
+    hindi:
+      # Tuning for Hindi speech patterns
+      segmentation:
+        step: 0.05  # Smaller step for tonal languages
+        
+    punjabi:
+      # Tuning for Punjabi speech patterns
+      vad:
+        onset: 0.45  # Slightly lower threshold
+        
+    bengali:
+      # Tuning for Bengali speech patterns
+      clustering:
+        threshold: 0.75  # Higher threshold for Bengali
+        
+    nepali:
+      # Tuning for Nepali speech patterns
+      pass
+      
+    dogri:
+      # Tuning for Dogri speech patterns
+      pass
+
+# Environment-specific configurations
+environments:
+  development:
+    diarization:
+      max_speakers: 5  # Limit for faster processing
+    embedding:
+      batch_size: 8
+    logging:
+      log_level: "DEBUG"
+      save_intermediate_results: true
+      
+  production:
+    diarization:
+      max_speakers: 10
+    embedding:
+      batch_size: 64
+    optimization:
+      use_half_precision: true
+      parallel_extraction: true
+    logging:
+      log_level: "WARNING"
+      
+  testing:
+    diarization:
+      min_speakers: 1
+      max_speakers: 3
+    embedding:
+      batch_size: 4
+    logging:
+      log_level: "DEBUG"
+
+# Model variants for different scenarios
+variants:
+  fast:
+    segmentation:
+      step: 0.2
+      batch_size: 64
+    embedding:
+      batch_size: 64
+    optimization:
+      use_half_precision: true
+      
+  balanced:
+    segmentation:
+      step: 0.1
+      batch_size: 32
+    embedding:
+      batch_size: 32
+      
+  accurate:
+    segmentation:
+      step: 0.05
+      batch_size: 16
+    embedding:
+      batch_size: 16
+      chunk_duration: 5.0
+    clustering:
+      threshold: 0.6
+    optimization:
+      use_half_precision: false
+      
+  overlaps:
+    overlap:
+      enable: true
+      threshold: 0.3
+      min_overlap_duration: 0.05
+    segmentation:
+      step: 0.05
+
+# Advanced features
+advanced:
+  # Multi-modal diarization
+  multimodal:
+    enable: false
+    video_features: false
+    
+  # Adaptive thresholding
+  adaptive:
+    enable: true
+    adaptation_window: 60.0  # seconds
+    min_adaptation_segments: 5
+    
+  # Online diarization
+  online:
+    enable: false
+    chunk_duration: 10.0  # seconds
+    overlap_duration: 2.0  # seconds
+    
+  # Domain adaptation
+  domain_adaptation:
+    enable: false
+    adaptation_data: null
+    
+  # Custom models
+  custom_models:
+    use_custom_segmentation: false
+    use_custom_embedding: false
+    custom_model_path: null

@@ -1,0 +1,346 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: ps06_postgres
+    environment:
+      POSTGRES_DB: ps06_db
+      POSTGRES_USER: ps06_user
+      POSTGRES_PASSWORD: ps06_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - ps06_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ps06_user -d ps06_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache & Message Broker
+  redis:
+    image: redis:7-alpine
+    container_name: ps06_redis
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - ps06_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO Object Storage
+  minio:
+    image: minio/minio:latest
+    container_name: ps06_minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+      MINIO_CONSOLE_ADDRESS: ":9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    networks:
+      - ps06_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Main API Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: ps06_api
+    environment:
+      - DATABASE_URL=postgresql://ps06_user:ps06_password@postgres:5432/ps06_db
+      - REDIS_URL=redis://host.docker.internal:6379/0
+      - CELERY_BROKER_URL=redis://host.docker.internal:6379/1
+      - CELERY_RESULT_BACKEND=redis://host.docker.internal:6379/2
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - LOG_LEVEL=INFO
+      - PYTHONPATH=/app
+    volumes:
+      - ./models:/app/models:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./configs:/app/configs:ro
+    ports:
+      - "8000:8000"
+    networks:
+      - ps06_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Celery Worker for Audio Processing
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: ps06_worker
+    command: celery -A src.tasks.celery_app worker --loglevel=info --concurrency=2 --pool=threads
+    environment:
+      - DATABASE_URL=postgresql://ps06_user:ps06_password@postgres:5432/ps06_db
+      - REDIS_URL=redis://host.docker.internal:6379/0
+      - CELERY_BROKER_URL=redis://host.docker.internal:6379/1
+      - CELERY_RESULT_BACKEND=redis://host.docker.internal:6379/2
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - LOG_LEVEL=INFO
+      - PYTHONPATH=/app
+      - CUDA_VISIBLE_DEVICES=0
+    volumes:
+      - ./models:/app/models:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./configs:/app/configs:ro
+    networks:
+      - ps06_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  # Celery Beat Scheduler
+  scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: ps06_scheduler
+    command: celery -A src.tasks.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    environment:
+      - DATABASE_URL=postgresql://ps06_user:ps06_password@postgres:5432/ps06_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - LOG_LEVEL=INFO
+      - PYTHONPATH=/app
+    volumes:
+      - ./logs:/app/logs
+      - scheduler_data:/tmp
+    networks:
+      - ps06_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Flower - Celery Monitoring
+  flower:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: ps06_flower
+    command: celery -A src.tasks.celery_app flower --port=5555
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/2
+      - FLOWER_PORT=5555
+      - FLOWER_BASIC_AUTH=admin:flower_password
+    ports:
+      - "5555:5555"
+    networks:
+      - ps06_network
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: ps06_nginx
+    volumes:
+      - ./configs/deployment/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./logs/nginx:/var/log/nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    networks:
+      - ps06_network
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # Triton Inference Server (Optional)
+  triton:
+    image: nvcr.io/nvidia/tritonserver:23.10-py3
+    container_name: ps06_triton
+    command: tritonserver --model-repository=/models --allow-gpu-metrics=true --allow-cpu-metrics=true
+    volumes:
+      - ./models/triton:/models:ro
+    ports:
+      - "8001:8001"  # HTTP
+      - "8002:8002"  # gRPC
+      - "8003:8003"  # Metrics
+    networks:
+      - ps06_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles:
+      - triton
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ps06_prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./configs/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - ps06_network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ps06_grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=grafana_password
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./configs/monitoring/grafana:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    networks:
+      - ps06_network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  scheduler_data:
+    driver: local
+
+networks:
+  ps06_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Development override
+# Use: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+---
+# docker-compose.dev.yml (for development)
+version: '3.8'
+
+services:
+  api:
+    build:
+      target: development
+    volumes:
+      - .:/app
+      - /app/__pycache__
+      - /app/.pytest_cache
+    environment:
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - RELOAD=true
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    build:
+      target: development
+    volumes:
+      - .:/app
+      - /app/__pycache__
+    command: celery -A src.tasks.celery_app worker --loglevel=debug --concurrency=1 --pool=solo
+
+  # Add development database for testing
+  postgres_test:
+    image: postgres:15-alpine
+    container_name: ps06_postgres_test
+    environment:
+      POSTGRES_DB: ps06_test_db
+      POSTGRES_USER: ps06_test_user
+      POSTGRES_PASSWORD: ps06_test_password
+    ports:
+      - "5433:5432"
+    networks:
+      - ps06_network
+    profiles:
+      - test

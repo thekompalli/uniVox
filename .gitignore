@@ -1,0 +1,557 @@
+# PS-06 Competition System .gitignore
+
+# ==============================================================================
+# Environment and Configuration
+# ==============================================================================
+.env
+.env.local
+.env.production
+.env.development
+*.env
+
+# Local configuration overrides
+config.local.yaml
+config.local.json
+local_settings.py
+
+# ==============================================================================
+# Python
+# ==============================================================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff (if applicable)
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff (if applicable)
+instance/
+.webassets-cache
+
+# Scrapy stuff (if applicable)
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+.pdm.toml
+
+# PEP 582
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# ==============================================================================
+# Audio and Media Files
+# ==============================================================================
+# Audio files (keep small test files, ignore large datasets)
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.aac
+*.wma
+*.aiff
+*.au
+
+# Video files
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.mkv
+
+# Images (except documentation images)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+# Keep docs images
+!docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.gif
+
+# ==============================================================================
+# Machine Learning Models and Data
+# ==============================================================================
+# Large model files
+models/
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.pb
+*.tflite
+*.mlmodel
+
+# Model checkpoints
+checkpoints/
+*.ckpt
+checkpoint
+
+# Datasets
+data/
+datasets/
+# Limit ignores to dataset folders instead of globally
+data/**/*.csv
+data/**/*.json
+data/**/*.jsonl
+data/**/*.tsv
+data/**/*.parquet
+data/**/*.arrow
+datasets/**/*.csv
+datasets/**/*.json
+datasets/**/*.jsonl
+datasets/**/*.tsv
+datasets/**/*.parquet
+datasets/**/*.arrow
+
+# Keep small example files
+!**/examples/**
+!**/sample_data/**
+!tests/**/*.csv
+!tests/**/*.json
+
+# HuggingFace cache
+transformers_cache/
+huggingface_cache/
+
+# TensorBoard logs
+runs/
+logs/tensorboard/
+
+# ==============================================================================
+# Logs and Temporary Files
+# ==============================================================================
+# Application logs
+logs/
+*.log
+*.log.*
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+*.tmp
+*.temp
+
+# Cache directories
+cache/
+.cache/
+*.cache
+
+# Processing temporary files
+processing_temp/
+audio_temp/
+results_temp/
+
+# ==============================================================================
+# Database and Storage
+# ==============================================================================
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Database dumps
+*.sql
+*.dump
+
+# PostgreSQL
+*.pgdump
+
+# Redis dumps
+dump.rdb
+
+# ==============================================================================
+# Docker and Containers
+# ==============================================================================
+# Docker volumes
+docker-volumes/
+.docker/
+
+# Docker override files
+docker-compose.override.yml
+docker-compose.local.yml
+
+# ==============================================================================
+# IDE and Editors
+# ==============================================================================
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# ==============================================================================
+# OS Generated Files
+# ==============================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.stackdump
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ==============================================================================
+# Cloud and Remote Storage
+# ==============================================================================
+# AWS
+.aws/
+
+# Google Cloud
+.gcloud/
+# Do not ignore all JSON globally; handled above for data folders only
+
+# Azure
+.azure/
+
+# ==============================================================================
+# Security and Secrets
+# ==============================================================================
+# API keys and secrets
+secrets/
+*.key
+*.pem
+*.crt
+*.csr
+*.p12
+*.pfx
+
+# Authentication files
+.netrc
+.htpasswd
+
+# ==============================================================================
+# Monitoring and Metrics
+# ==============================================================================
+# Prometheus data
+prometheus_data/
+
+# Grafana data
+grafana_data/
+
+# Metrics and monitoring
+metrics/
+monitoring/
+
+# ==============================================================================
+# Backup Files
+# ==============================================================================
+backups/
+*.bak
+*.backup
+*.old
+*.orig
+
+# ==============================================================================
+# Competition Specific
+# ==============================================================================
+# Competition data
+competition_data/
+evaluation_data/
+test_data/
+submission_data/
+
+# Generated competition files
+SID_*.csv
+SD_*.csv
+LID_*.csv
+ASR_*.trn
+NMT_*.txt
+*.hash
+
+# Speaker gallery
+speaker_gallery/
+enrollment_data/
+
+# ==============================================================================
+# Development and Testing
+# ==============================================================================
+# Profiling data
+.prof
+*.prof
+
+# Debug dumps
+debug/
+dumps/
+
+# Performance logs
+performance/
+benchmarks/
+
+# Test artifacts
+test_results/
+test_output/
+
+# ==============================================================================
+# Documentation Build
+# ==============================================================================
+# Sphinx
+_build/
+_static/
+_templates/
+
+# MkDocs
+site/
+
+# ==============================================================================
+# Package Management
+# ==============================================================================
+# npm (if any JavaScript tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ==============================================================================
+# Jupyter and Research
+# ==============================================================================
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Research notebooks (keep important ones)
+notebooks/scratch/
+notebooks/experiments/
+
+# ==============================================================================
+# CI/CD
+# ==============================================================================
+# GitHub Actions artifacts
+.github/workflows/artifacts/
+
+# Jenkins
+.jenkins/
+
+# GitLab CI
+.gitlab-ci-local/
+
+# ==============================================================================
+# Custom Project Directories
+# ==============================================================================
+# Add any project-specific directories here
+scratch/
+
+# ==============================================================================
+# Linters
+# ==============================================================================
+# Ruff cache
+.ruff_cache/
+experiments/
+playground/
+sandbox/
+archive/
+
+# Local development tools
+dev_tools/
+scripts/local/
+
+
+# ==============================================================================
+# Keep Important Files
+# ==============================================================================
+# Force include certain files that might be ignored by patterns above
+!.gitkeep
+!README.md
+!requirements.txt
+!Dockerfile
+!docker-compose.yml
+!setup.py
+!pyproject.toml
+
+# Keep configuration examples
+!*.example
+!*.sample
+!*.template
+
+# Keep test fixtures
+!tests/fixtures/**
+!tests/data/**
+
+# Keep documentation assets
+!docs/**
+!README/**
+
+# Keep scripts
+!scripts/*.sh
+!scripts/*.py
+
+# ==============================================================================
+# Final Catch-All
+# ==============================================================================
+# Very large files (anything over 100MB should probably not be in git)
+*.bin
+*.[0-9]GB
+*.[0-9]gb

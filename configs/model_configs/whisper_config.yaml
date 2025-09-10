@@ -1,0 +1,211 @@
+# Whisper ASR Model Configuration for PS-06 Competition System
+
+whisper:
+  # Model selection
+  model_size: "large-v3"  # tiny, base, small, medium, large, large-v2, large-v3
+  model_path: null  # Use default HuggingFace path if null
+  
+  # Device configuration
+  device: "cuda"  # cuda, cpu, auto
+  compute_type: "float16"  # float16, float32, int8
+  device_index: 0  # GPU device index
+  
+  # Processing parameters
+  batch_size: 16
+  beam_size: 5
+  best_of: 5
+  patience: 1.0
+  length_penalty: 1.0
+  repetition_penalty: 1.0
+  no_repeat_ngram_size: 0
+  
+  # Temperature settings for sampling
+  temperature: 0.0  # 0.0 for deterministic, > 0.0 for sampling
+  temperature_increment_on_fallback: 0.2
+  
+  # Audio preprocessing
+  audio:
+    sample_rate: 16000
+    chunk_length: 30  # seconds
+    overlap: 0.0  # seconds overlap between chunks
+    normalize: true
+    denoise: false
+    
+  # Language detection
+  language_detection:
+    enable: true
+    threshold: 0.5
+    max_languages: 3
+    
+  # Voice Activity Detection
+  vad:
+    enable: true
+    threshold: 0.5
+    min_speech_duration: 0.1  # seconds
+    max_speech_duration: 30.0  # seconds
+    
+  # Decoding options
+  decoding:
+    task: "transcribe"  # transcribe, translate
+    word_timestamps: true
+    condition_on_previous_text: true
+    initial_prompt: null
+    prefix: null
+    suppress_blank: true
+    suppress_tokens: [-1]  # List of token IDs to suppress
+    without_timestamps: false
+    max_initial_timestamp: 1.0
+    
+  # Language-specific configurations
+  languages:
+    english:
+      model_specific: null
+      prompt: null
+      temperature: 0.0
+      
+    hindi:
+      model_specific: null
+      prompt: "हिंदी भाषा में बोलें"
+      temperature: 0.0
+      
+    punjabi:
+      model_specific: null
+      prompt: "ਪੰਜਾਬੀ ਭਾਸ਼ਾ ਵਿੱਚ ਬੋਲੋ"
+      temperature: 0.0
+      
+    bengali:
+      model_specific: null
+      prompt: "বাংলা ভাষায় বলুন"
+      temperature: 0.0
+      
+    nepali:
+      model_specific: null
+      prompt: "नेपाली भाषामा बोल्नुहोस्"
+      temperature: 0.0
+      
+    dogri:
+      model_specific: null
+      prompt: "डोगरी भाषा में बोलें"
+      temperature: 0.0
+      
+  # Performance optimization
+  optimization:
+    enable_flash_attention: true
+    use_cache: true
+    cache_size: 100  # Number of cached models
+    preload_models: true
+    
+  # Memory management
+  memory:
+    max_memory_mb: 8192  # Maximum memory usage in MB
+    clear_cache_interval: 100  # Clear cache every N requests
+    force_gc: true  # Force garbage collection
+    
+  # Postprocessing
+  postprocess:
+    normalize_text: true
+    remove_filler_words: false
+    correct_punctuation: true
+    capitalize_sentences: true
+    
+    # Text filtering
+    filter:
+      min_word_count: 1
+      max_word_count: 1000
+      min_confidence: 0.3
+      remove_duplicates: true
+      
+    # Language-specific postprocessing
+    language_specific:
+      hindi:
+        normalize_devanagari: true
+        remove_diacritics: false
+        
+      punjabi:
+        normalize_gurmukhi: true
+        remove_diacritics: false
+        
+      bengali:
+        normalize_bengali: true
+        remove_diacritics: false
+        
+  # Quality assessment
+  quality:
+    enable_quality_scoring: true
+    confidence_threshold: 0.5
+    word_error_rate_threshold: 0.3
+    
+  # Logging and debugging
+  logging:
+    log_level: "INFO"
+    log_transcriptions: true
+    log_timings: true
+    log_memory_usage: false
+    
+  # Competition-specific settings
+  competition:
+    # PS-06 competition requirements
+    output_format: "competition"
+    include_timestamps: true
+    include_confidence: true
+    include_word_level: false
+    
+    # Performance targets
+    target_wer: 0.25  # Word Error Rate < 25%
+    target_rtf: 2.0   # Real-time factor < 2x
+    
+    # Validation
+    validate_output: true
+    strict_formatting: true
+
+# Environment-specific overrides
+environments:
+  development:
+    batch_size: 4
+    logging:
+      log_level: "DEBUG"
+      log_transcriptions: true
+      log_timings: true
+      
+  production:
+    batch_size: 32
+    optimization:
+      preload_models: true
+      use_cache: true
+    logging:
+      log_level: "WARNING"
+      log_transcriptions: false
+      
+  testing:
+    batch_size: 1
+    model_size: "small"  # Use smaller model for faster tests
+    logging:
+      log_level: "DEBUG"
+
+# Model variants for different use cases
+variants:
+  fast:
+    model_size: "small"
+    batch_size: 32
+    beam_size: 1
+    temperature: 0.0
+    
+  balanced:
+    model_size: "medium"
+    batch_size: 16
+    beam_size: 5
+    temperature: 0.0
+    
+  accurate:
+    model_size: "large-v3"
+    batch_size: 8
+    beam_size: 10
+    temperature: 0.0
+    
+  multilingual:
+    model_size: "large-v3"
+    language_detection:
+      enable: true
+      max_languages: 6
+    decoding:
+      condition_on_previous_text: false
