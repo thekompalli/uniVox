@@ -107,6 +107,8 @@ class AppConfig(BaseSettings):
         env_file = ".env"
         case_sensitive = False
         extra = "ignore"
+        # Avoid picking up unrelated global env vars like DEBUG from the OS
+        env_prefix = "PS06_"
 
 
 class ModelConfig(BaseSettings):
@@ -153,6 +155,7 @@ class ModelConfig(BaseSettings):
     class Config:
         env_file = ".env"
         extra = "ignore"
+        env_prefix = "PS06_"
 
 
 class LoggingConfig:
