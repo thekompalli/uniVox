@@ -139,7 +139,8 @@ class ASRService:
                         segment_audio,
                         sample_rate,
                         segment.get('language', 'auto'),
-                        segment.get('speaker', f'speaker_{i}')
+                        segment.get('speaker', f'speaker_{i}'),
+                        segment.get('lid_confidence')
                     )
                     
                     if transcription and transcription['text'].strip():
@@ -147,7 +148,7 @@ class ASRService:
                             'start': segment['start'],
                             'end': segment['end'],
                             'speaker': segment.get('speaker', f'speaker_{i}'),
-                            'language': segment.get('language', 'unknown'),
+                            'language': transcription.get('language', segment.get('language', 'unknown')),
                             'text': transcription['text'].strip(),
                             'confidence': transcription.get('confidence', 0.8),
                             'words': transcription.get('words', [])
@@ -192,7 +193,8 @@ class ASRService:
         segment_audio: np.ndarray,
         sample_rate: int,
         language: str,
-        speaker: str
+        speaker: str,
+        lid_confidence: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
         """Transcribe a single audio segment"""
         try:
@@ -203,7 +205,8 @@ class ASRService:
                 segment_audio,
                 sample_rate,
                 language,
-                speaker
+                speaker,
+                lid_confidence
             )
             
             return result
@@ -217,7 +220,8 @@ class ASRService:
         segment_audio: np.ndarray,
         sample_rate: int,
         language: str,
-        speaker: str
+        speaker: str,
+        lid_confidence: Optional[float] = None
     ) -> Optional[Dict[str, Any]]:
         """Synchronous segment transcription"""
         try:
@@ -233,7 +237,10 @@ class ASRService:
             sf.write(tmp_path, segment_audio, sample_rate)
 
             # Transcribe with Whisper (force transcribe task, never translate)
-            code = self._whisper_language_code(language)
+            # Only force language when LID is confident; otherwise allow auto-detect
+            threshold = getattr(model_config, 'language_confidence_threshold', 0.8)
+            force_lang = (lid_confidence is not None and float(lid_confidence) >= float(threshold))
+            code = self._whisper_language_code(language) if force_lang else None
             if code is None:
                 # Let Whisper auto-detect language
                 result = model.transcribe(tmp_path, task='transcribe')
@@ -265,9 +272,23 @@ class ASRService:
                                 'confidence': word.get('probability', 0.8)
                             })
 
+            # Normalize Whisper language code to canonical name when available
+            detected_code = result.get('language')
+            code_map = {
+                'en': 'english',
+                'hi': 'hindi',
+                'bn': 'bengali',
+                'pa': 'punjabi',
+                'ur': 'urdu',
+                'ne': 'nepali',
+                'gu': 'gujarati',
+                'mr': 'marathi'
+            }
+            detected_lang = code_map.get(str(detected_code).lower(), language)
+
             return {
-                'text': result['text'],
-                'language': result.get('language', language),
+                'text': result.get('text', ''),
+                'language': detected_lang,
                 'confidence': self._calculate_transcription_confidence(result),
                 'words': words
             }
@@ -357,11 +378,14 @@ class ASRService:
                         key=lambda x: x['confidence'] * x['overlap_duration']
                     )
                     language = dominant_language['language']
+                    lid_confidence = float(dominant_language.get('confidence', 0.0))
                 else:
                     language = 'auto'  # Auto-detect if no language info
+                    lid_confidence = 0.0
                 
                 merged_segment = speaker_segment.copy()
                 merged_segment['language'] = language
+                merged_segment['lid_confidence'] = lid_confidence
                 merged_segments.append(merged_segment)
             
             return merged_segments

@@ -58,6 +58,10 @@ class ProcessRequest(BaseModel):
         le=10.0,
         description="Minimum segment duration in seconds"
     )
+    translate: bool = Field(
+        default=True,
+        description="Run translation stage (true) or skip (false)"
+    )
     
     @validator('languages')
     def validate_languages(cls, v):

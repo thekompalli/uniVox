@@ -5,6 +5,7 @@ Celery tasks for async audio processing pipeline
 import logging
 import traceback
 from datetime import datetime, timedelta
+import asyncio
 from typing import Dict, Any, List
 
 from celery import chain, group
@@ -354,7 +355,51 @@ def translate_text(self, job_id: str, request_params: Dict[str, Any]):
     """
     try:
         logger.info(f"Starting translation for job {job_id}")
-        
+
+        # Allow disabling translation (Whisper transcribe-only mode)
+        try:
+            if request_params is not None and request_params.get('translate') is False:
+                logger.info(f"Translation disabled by request for job {job_id}; generating passthrough results")
+                _update_job_status(job_id, JobState.TRANSLATION, 0.9, "Translation skipped (passthrough)")
+                # Build no-translation results from ASR output
+                translation_service = TranslationService()
+                transcription_data = translation_service.load_transcription_results_sync(job_id)
+                segments = []
+                for seg in transcription_data.get('segments', []):
+                    segments.append({
+                        'start': seg.get('start'),
+                        'end': seg.get('end'),
+                        'speaker': seg.get('speaker'),
+                        'source_language': seg.get('language', 'unknown'),
+                        'target_language': 'english',
+                        'source_text': seg.get('text', ''),
+                        'translated_text': seg.get('text', ''),
+                        'translation_confidence': 1.0,
+                        'translation_method': 'no_translation'
+                    })
+                # Persist and return in the same format as normal translation (sync context)
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(
+                        translation_service._save_translation_results(job_id, {
+                            'segments': segments,
+                            'translation_segments': segments,
+                            'quality_metrics': translation_service._calculate_translation_quality(segments) if segments else {},
+                            'total_segments': len(segments),
+                            'languages_translated': list({s.get('source_language','unknown') for s in segments})
+                        })
+                    )
+                finally:
+                    try:
+                        loop.close()
+                    except Exception:
+                        pass
+                logger.info(f"Translation passthrough completed for job {job_id}")
+                return {'segments': segments, 'quality_metrics': {}, 'total_segments': len(segments)}
+        except Exception as guard_exc:
+            logger.warning(f"Translation disable guard failed; proceeding with normal translation: {guard_exc}")
+
         _update_job_status(job_id, JobState.TRANSLATION, 0.9, "Translating text")
         
         # Initialize service
