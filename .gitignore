@@ -555,3 +555,9 @@ scripts/local/
 *.bin
 *.[0-9]GB
 *.[0-9]gb
+
+# ==============================================================================
+# Local tool settings (do not version)
+# Ignore Claude config directories wherever they appear
+.claude/
+**/.claude/
