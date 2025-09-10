@@ -48,7 +48,7 @@ def process_audio_pipeline(self, job_id: str, request_params: Dict[str, Any]):
         pipeline = chain(
             preprocess_audio.si(job_id, request_params),
             diarize_speakers.si(job_id),
-            identify_languages.si(job_id),
+            identify_languages.si(job_id, request_params),
             transcribe_audio.si(job_id, request_params),
             translate_text.si(job_id, request_params),
             generate_outputs.si(job_id, request_params)
@@ -210,7 +210,7 @@ def diarize_speakers(self, job_id: str):
 
 
 @celery_app.task(bind=True, ignore_result=True)
-def identify_languages(self, job_id: str):
+def identify_languages(self, job_id: str, request_params: Dict[str, Any] = None):
     """
     Language identification task
     
@@ -245,11 +245,19 @@ def identify_languages(self, job_id: str):
             pass
 
         # Perform language identification
+        expected_langs = None
+        try:
+            if request_params and isinstance(request_params, dict):
+                expected_langs = request_params.get('languages')
+        except Exception:
+            expected_langs = None
+
         result = language_service.identify_languages_sync(
             job_id,
             processed_data['audio_data'],
             processed_data['sample_rate'],
-            segments
+            segments,
+            expected_languages=expected_langs
         )
 
         # Persist language identification results
