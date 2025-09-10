@@ -2,7 +2,7 @@
 
 **Language Agnostic Speaker Identification & Diarization; and subsequent Transcription & Translation System**
 
-A comprehensive audio processing system designed for the PS-06 Grand Challenge competition, providing offline speaker identification, diarization, language identification, automatic speech recognition, and neural machine translation for multilingual audio files.
+A comprehensive audio processing system designed to provide offline speaker identification, diarization, language identification, automatic speech recognition, and neural machine translation for multilingual audio files.
 
 ## Overview
 
