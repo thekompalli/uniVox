@@ -48,7 +48,7 @@ def process_audio_pipeline(self, job_id: str, request_params: Dict[str, Any]):
         # Create processing chain (sequential to avoid blocking on group semantics)
         pipeline = chain(
             preprocess_audio.si(job_id, request_params),
-            diarize_speakers.si(job_id),
+            diarize_speakers.si(job_id, request_params),
             identify_languages.si(job_id, request_params),
             transcribe_audio.si(job_id, request_params),
             translate_text.si(job_id, request_params),
@@ -147,7 +147,7 @@ def preprocess_audio(self, job_id: str, request_params: Dict[str, Any]):
 
 
 @celery_app.task(bind=True, ignore_result=True)
-def diarize_speakers(self, job_id: str):
+def diarize_speakers(self, job_id: str, request_params: Dict[str, Any] = None):
     """
     Speaker diarization task
     
@@ -169,10 +169,18 @@ def diarize_speakers(self, job_id: str):
         # Load processed audio data
         processed_data = diarization_service.load_processed_data_sync(job_id)
         
-        # Perform diarization
+        # Perform diarization (optionally with speaker count hint)
+        num_speakers = None
+        try:
+            if request_params and isinstance(request_params, dict):
+                num_speakers = request_params.get('num_speakers')
+        except Exception:
+            num_speakers = None
+
         diarization_result = diarization_service.diarize_audio_sync(
             processed_data['audio_data'],
-            processed_data['sample_rate']
+            processed_data['sample_rate'],
+            num_speakers=num_speakers
         )
         
         # Speaker identification
@@ -384,7 +392,6 @@ def translate_text(self, job_id: str, request_params: Dict[str, Any]):
                     loop.run_until_complete(
                         translation_service._save_translation_results(job_id, {
                             'segments': segments,
-                            'translation_segments': segments,
                             'quality_metrics': translation_service._calculate_translation_quality(segments) if segments else {},
                             'total_segments': len(segments),
                             'languages_translated': list({s.get('source_language','unknown') for s in segments})

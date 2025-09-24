@@ -129,14 +129,20 @@ class DiarizationService:
             
             # Configure pipeline parameters
             if num_speakers:
-                self.diarization_model.instantiate({
-                    "clustering": {
-                        "method": "centroid",
-                        "min_cluster_size": max(2, num_speakers - 1),
-                        "max_cluster_size": num_speakers + 2
-                    }
-                })
-            
+                try:
+                    # Apply speaker-count hint when pipeline supports it (pyannote >= 3.1)
+                    self.diarization_model.instantiate({
+                        "num_speakers": int(num_speakers)
+                    })
+                except ValueError:
+                    logger.warning(
+                        "Diarization pipeline does not accept 'num_speakers'; using default configuration"
+                    )
+                except Exception as inst_err:
+                    logger.warning(
+                        "Unable to apply diarization speaker hint: %s", inst_err
+                    )
+
             # Run diarization
             diarization_result = self.diarization_model(str(temp_path))
             
@@ -179,13 +185,30 @@ class DiarizationService:
         try:
             segments = diarization_result['segments']
             
-            # Filter short segments
+            # Filter short segments: attempt to merge tiny ones into neighbors instead of dropping
             filtered_segments = []
-            for segment in segments:
-                if segment['duration'] >= app_config.min_segment_duration:
-                    filtered_segments.append(segment)
+            segments_sorted = sorted(segments, key=lambda s: s['start'])
+            for seg in segments_sorted:
+                if seg['duration'] >= app_config.min_segment_duration:
+                    filtered_segments.append(seg)
                 else:
-                    logger.debug(f"Filtering short segment: {segment['duration']:.3f}s")
+                    # Try to merge with previous of same speaker if close enough (<= 0.5s gap)
+                    if (
+                        filtered_segments
+                        and filtered_segments[-1]['speaker'] == seg['speaker']
+                        and (seg['start'] - filtered_segments[-1]['end']) <= 0.5
+                    ):
+                        prev = filtered_segments[-1]
+                        filtered_segments[-1] = {
+                            'start': prev['start'],
+                            'end': seg['end'],
+                            'speaker': seg['speaker'],
+                            'duration': seg['end'] - prev['start'],
+                            'confidence': (prev.get('confidence', 1.0) + seg.get('confidence', 1.0)) / 2,
+                        }
+                    else:
+                        # Keep tiny segment rather than drop; downstream may handle it
+                        filtered_segments.append(seg)
             
             # Merge overlapping segments from same speaker
             merged_segments = self._merge_speaker_segments(filtered_segments)
@@ -467,13 +490,14 @@ class DiarizationService:
             return {'audio_data': np.array([]), 'sample_rate': 16000, 'speech_segments': []}
     
     def diarize_audio_sync(
-        self, 
-        audio_data: np.ndarray, 
-        sample_rate: int
+        self,
+        audio_data: np.ndarray,
+        sample_rate: int,
+        num_speakers: Optional[int] = None
     ) -> Dict[str, Any]:
         """Synchronous diarization for Celery tasks"""
         try:
-            return self._diarize_sync(audio_data, sample_rate)
+            return self._diarize_sync(audio_data, sample_rate, num_speakers)
             
         except Exception as e:
             logger.exception(f"Error in synchronous diarization: {e}")

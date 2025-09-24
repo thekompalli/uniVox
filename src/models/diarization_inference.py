@@ -133,23 +133,15 @@ class DiarizationInference:
                 
                 # Configure pipeline parameters
                 if num_speakers:
-                    # Set exact number of speakers
+                    # Set exact number of speakers (pyannote 3.x API)
                     self.pipeline.instantiate({
-                        "clustering": {
-                            "method": "centroid", 
-                            "min_cluster_size": num_speakers,
-                            "max_cluster_size": num_speakers
-                        }
+                        "num_speakers": int(num_speakers)
                     })
                 else:
-                    # Set speaker range
+                    # Provide a reasonable range
                     self.pipeline.instantiate({
-                        "clustering": {
-                            "method": "centroid",
-                            "min_cluster_size": min_speakers,
-                            "max_cluster_size": max_speakers,
-                            "threshold": model_config.diarization_threshold
-                        }
+                        "min_speakers": int(min_speakers),
+                        "max_speakers": int(max_speakers)
                     })
                 
                 # Run diarization
@@ -301,11 +293,7 @@ class DiarizationInference:
             # Configure pipeline
             if num_speakers:
                 self.pipeline.instantiate({
-                    "clustering": {
-                        "method": "centroid",
-                        "min_cluster_size": num_speakers,
-                        "max_cluster_size": num_speakers
-                    }
+                    "num_speakers": int(num_speakers)
                 })
             
             # Run diarization

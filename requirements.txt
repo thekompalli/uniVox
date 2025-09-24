@@ -28,6 +28,7 @@ datasets==2.14.7
 speechbrain==0.5.16
 openai-whisper==20231117
 whisperx==3.1.1
+faster-whisper==1.0.3
 # Optional: WeSpeaker is not published on PyPI.
 # Install from source if needed (Linux recommended) and comment out below:
 # pip install git+https://github.com/wenet-e2e/wespeaker.git

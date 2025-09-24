@@ -6,6 +6,18 @@ import os
 from pathlib import Path
 
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def _env(key: str, default: str = '') -> str:
+    value = os.getenv(key, default)
+    if value is None:
+        return default
+    cleaned = value.split('#', 1)[0].strip()
+    return cleaned or default
+
 class ModelConfig:
     """Configuration for ML models"""
     
@@ -13,10 +25,16 @@ class ModelConfig:
     models_dir = Path(os.getenv('MODELS_DIR', 'models'))
     
     # Whisper ASR Models
-    whisper_model = os.getenv('WHISPER_MODEL', 'large-v3')
-    whisper_hindi_model = os.getenv('WHISPER_HINDI_MODEL', '')  # Optional fine-tuned model
-    whisper_bengali_model = os.getenv('WHISPER_BENGALI_MODEL', '')  # Optional fine-tuned model
-    whisper_hf_model = os.getenv('WHISPER_HF_MODEL', 'openai/whisper-large-v3')
+    whisper_model = _env('WHISPER_MODEL', 'large-v3')
+    whisper_hindi_model = _env('WHISPER_HINDI_MODEL', '')  # Optional fine-tuned model
+    whisper_bengali_model = _env('WHISPER_BENGALI_MODEL', '')  # Optional fine-tuned model
+    whisper_hf_model = _env('WHISPER_HF_MODEL', 'openai/whisper-large-v3')
+    whisper_backend = _env('WHISPER_BACKEND', 'openai').lower()
+    fast_whisper_model_path = _env('FAST_WHISPER_MODEL_PATH', '')
+    fast_whisper_device = _env('FAST_WHISPER_DEVICE', '')
+    fast_whisper_compute_type = _env('FAST_WHISPER_COMPUTE_TYPE', '')
+    fast_whisper_vad_filter = _env('FAST_WHISPER_VAD_FILTER', 'false').lower() == 'true'
+
     
     # Whisper inference parameters
     whisper_beam_size = int(os.getenv('WHISPER_BEAM_SIZE', '5'))

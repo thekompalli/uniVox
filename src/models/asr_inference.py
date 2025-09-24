@@ -32,6 +32,7 @@ class ASRInference:
         self.executor = ThreadPoolExecutor(max_workers=2)
         self.temp_dir = Path(app_config.temp_dir)
         self.temp_dir.mkdir(exist_ok=True)
+        self._whisperx_aligners = {}
         self._initialize_models()
     
     def _initialize_models(self):

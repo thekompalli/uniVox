@@ -28,17 +28,30 @@ class ASRService:
     """Automatic Speech Recognition service using Whisper"""
     
     def __init__(self):
+        backend = getattr(model_config, 'whisper_backend', 'openai') or 'openai'
+        backend_normalized = str(backend).lower()
+        if backend_normalized in {'fast', 'fast-whisper', 'faster-whisper'}:
+            self.whisper_backend = 'fast'
+        else:
+            self.whisper_backend = 'openai'
+        logger.info("Using Whisper backend: %s", self.whisper_backend)
         self.whisper_models = {}
         self.asr_inference = ASRInference()
         self.audio_repo = AudioRepository()
         self.audio_utils = AudioUtils()
         self.eval_utils = EvalUtils()
         self.executor = ThreadPoolExecutor(max_workers=2)
+        self.whisperx_aligners = {}
+        self.fast_whisper_model = None
+        self.fast_whisper_options = {}
         self._initialize_models()
     
     def _initialize_models(self):
         """Initialize ASR models"""
         try:
+            if self.whisper_backend == 'fast':
+                self._initialize_fast_whisper()
+                return
             logger.info("Initializing ASR models")
 
             # Decide device and cache directory for Whisper weights
@@ -79,6 +92,58 @@ class ASRService:
             logger.exception(f"Error initializing ASR models: {e}")
             raise
     
+    def _initialize_fast_whisper(self):
+        """Initialize fast-whisper backend."""
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as exc:
+            raise RuntimeError(
+                "fast-whisper backend requested but faster-whisper is not installed. Install faster-whisper to use this backend."
+            ) from exc
+
+        try:
+            logger.info("Initializing Fast Whisper ASR model")
+
+            cache_env = os.getenv('WHISPER_CACHE_DIR')
+            cache_path = Path(cache_env) if cache_env else (app_config.models_dir / "whisper")
+            cache_path.mkdir(parents=True, exist_ok=True)
+
+            model_identifier = getattr(model_config, 'fast_whisper_model_path', '') or model_config.whisper_model
+            model_identifier = (model_identifier or model_config.whisper_model).strip()
+
+            device = getattr(model_config, 'fast_whisper_device', '') or ('cuda' if torch.cuda.is_available() else 'cpu')
+            compute_type = getattr(model_config, 'fast_whisper_compute_type', '')
+            if not compute_type:
+                compute_type = 'float16' if str(device).startswith('cuda') else 'auto'
+
+            model_path = Path(model_identifier)
+            kwargs = {
+                'device': device,
+                'compute_type': compute_type,
+            }
+            if model_path.exists():
+                model_arg = str(model_path)
+            else:
+                model_arg = model_identifier
+                kwargs['download_root'] = str(cache_path)
+
+            self.fast_whisper_model = WhisperModel(model_arg, **kwargs)
+            self.fast_whisper_options = {
+                'beam_size': getattr(model_config, 'whisper_beam_size', 5),
+                'temperature': getattr(model_config, 'whisper_temperature', 0.0),
+                'vad_filter': getattr(model_config, 'fast_whisper_vad_filter', False),
+            }
+
+            logger.info(
+                "Fast Whisper model loaded from %s on %s (compute_type=%s)",
+                model_arg,
+                device,
+                compute_type,
+            )
+        except Exception as exc:
+            logger.exception("Error initializing fast-whisper model: %s", exc)
+            raise
+
     async def transcribe_segments(
         self,
         job_id: str,
@@ -215,6 +280,35 @@ class ASRService:
             logger.exception(f"Error transcribing segment for speaker {speaker}: {e}")
             return None
     
+    def _get_whisperx_aligner(
+        self,
+        language_code: Optional[str],
+        device: torch.device
+    ):
+        """Return cached WhisperX alignment model if available"""
+        lang_key = (language_code or 'en').lower()
+        device_str = str(device)
+        device_key = 'cuda' if device_str.startswith('cuda') else 'cpu'
+        cache_key = (lang_key, device_key)
+        if cache_key in self.whisperx_aligners:
+            return self.whisperx_aligners[cache_key]
+        try:
+            import whisperx
+            align_model, metadata = whisperx.load_align_model(
+                language_code=lang_key,
+                device=device_key
+            )
+            self.whisperx_aligners[cache_key] = (align_model, metadata)
+            return self.whisperx_aligners[cache_key]
+        except Exception as align_err:
+            logger.debug(
+                "WhisperX aligner unavailable for %s on %s: %s",
+                language_code or 'en',
+                device,
+                align_err
+            )
+            return None
+
     def _transcribe_segment_sync(
         self,
         segment_audio: np.ndarray,
@@ -225,6 +319,13 @@ class ASRService:
     ) -> Optional[Dict[str, Any]]:
         """Synchronous segment transcription"""
         try:
+            if self.whisper_backend == 'fast':
+                return self._transcribe_segment_fast(
+                    segment_audio,
+                    sample_rate,
+                    language,
+                    lid_confidence,
+                )
             # Select appropriate model based on language
             model_key = self._select_model_for_language(language)
             model = self.whisper_models.get(model_key, self.whisper_models['multilingual'])
@@ -272,6 +373,69 @@ class ASRService:
                                 'confidence': word.get('probability', 0.8)
                             })
 
+            # If words are not present, try WhisperX alignment to obtain word timestamps
+            try:
+                transcript_text = result.get('text', '') or ''
+                if (
+                    not words
+                    and 'segments' in result
+                    and transcript_text
+                    and any(ch.isalpha() for ch in transcript_text)
+                ):
+                    import whisperx  # optional dependency present in requirements
+                    import torchaudio
+                    audio_tensor = torch.from_numpy(segment_audio).float().unsqueeze(0)
+                    if sample_rate != 16000:
+                        import torchaudio.transforms as T
+                        audio_tensor = T.Resample(sample_rate, 16000)(audio_tensor)
+                        sr_align = 16000
+                    else:
+                        sr_align = sample_rate
+                    with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmpw:
+                        wav_path = tmpw.name
+                    torchaudio.save(wav_path, audio_tensor, sr_align)
+                    try:
+                        align_pair = self._get_whisperx_aligner(code or 'en', model.device)
+                        if align_pair:
+                            align_model, metadata = align_pair
+                            audio_wav = whisperx.load_audio(wav_path)
+                            segments_for_align = result.get('segments', [])
+                            device_for_align = 'cuda' if str(model.device).startswith('cuda') else 'cpu'
+                            aligned = whisperx.align(
+                                segments_for_align,
+                                align_model,
+                                metadata,
+                                audio_wav,
+                                device_for_align,
+                                return_char_alignments=False
+                            )
+                            aligned_words = []
+                            for seg in aligned.get('segments', []):
+                                for w in seg.get('words', []) or []:
+                                    aligned_words.append({
+                                        'word': (w.get('word') or '').strip(),
+                                        'start': float(w.get('start', 0.0)),
+                                        'end': float(w.get('end', 0.0)),
+                                        'confidence': float(w.get('score', 0.8)),
+                                    })
+                            if aligned_words:
+                                words = aligned_words
+                        else:
+                            logger.debug(
+                                "WhisperX alignment unavailable for %s; using Whisper timestamps",
+                                code or 'en'
+                            )
+                    finally:
+                        try:
+                            Path(wav_path).unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                else:
+                    if transcript_text and not any(ch.isalpha() for ch in transcript_text):
+                        logger.debug("WhisperX alignment skipped: no alphabetic content")
+            except Exception as _align_err:
+                logger.debug(f"WhisperX alignment skipped: {_align_err}")
+
             # Normalize Whisper language code to canonical name when available
             detected_code = result.get('language')
             code_map = {
@@ -297,6 +461,121 @@ class ASRService:
             logger.exception(f"Error in synchronous transcription: {e}")
             return None
     
+
+    def _transcribe_segment_fast(
+        self,
+        segment_audio: np.ndarray,
+        sample_rate: int,
+        language: str,
+        lid_confidence: Optional[float],
+    ) -> Optional[Dict[str, Any]]:
+        """Transcribe segment using faster-whisper backend."""
+        if self.fast_whisper_model is None:
+            logger.error('Fast Whisper model is not initialized')
+            return None
+        try:
+            threshold = getattr(model_config, 'language_confidence_threshold', 0.8)
+            force_lang = lid_confidence is not None and float(lid_confidence) >= float(threshold)
+            code = self._whisper_language_code(language) if force_lang else None
+
+            audio = segment_audio.astype(np.float32)
+            target_sr = 16000
+            if sample_rate != target_sr:
+                import librosa
+                audio = librosa.resample(segment_audio, orig_sr=sample_rate, target_sr=target_sr)
+            audio = np.asarray(audio, dtype=np.float32)
+
+            transcribe_kwargs = {
+                'language': code,
+                'beam_size': self.fast_whisper_options.get('beam_size'),
+                'temperature': self.fast_whisper_options.get('temperature'),
+                'vad_filter': self.fast_whisper_options.get('vad_filter', False),
+                'word_timestamps': True,
+                'sample_rate': target_sr,
+            }
+            if transcribe_kwargs['language'] is None:
+                transcribe_kwargs.pop('language')
+            if transcribe_kwargs['beam_size'] is None:
+                transcribe_kwargs.pop('beam_size')
+            if transcribe_kwargs['temperature'] is None:
+                transcribe_kwargs.pop('temperature')
+
+            segments_iter, info = self.fast_whisper_model.transcribe(
+                audio,
+                **transcribe_kwargs,
+            )
+
+            segments = list(segments_iter)
+            text_parts = []
+            whisper_segments: List[Dict[str, Any]] = []
+            aggregated_words: List[Dict[str, Any]] = []
+
+            for seg in segments:
+                seg_text = (seg.text or '').strip()
+                text_parts.append(seg_text)
+                seg_dict: Dict[str, Any] = {
+                    'start': float(seg.start or 0.0),
+                    'end': float(seg.end or 0.0),
+                    'text': seg_text,
+                }
+                if getattr(seg, 'avg_logprob', None) is not None:
+                    seg_dict['avg_logprob'] = float(seg.avg_logprob)
+                if getattr(seg, 'no_speech_prob', None) is not None:
+                    seg_dict['no_speech_prob'] = float(seg.no_speech_prob)
+                if getattr(seg, 'compression_ratio', None) is not None:
+                    seg_dict['compression_ratio'] = float(seg.compression_ratio)
+
+                word_entries: List[Dict[str, Any]] = []
+                for word in getattr(seg, 'words', []) or []:
+                    word_dict = {
+                        'word': (word.word or '').strip(),
+                        'start': float(word.start or 0.0) if word.start is not None else 0.0,
+                        'end': float(word.end or 0.0) if word.end is not None else 0.0,
+                        'probability': float(word.probability or 0.0),
+                    }
+                    word_entries.append(word_dict)
+                    aggregated_words.append(word_dict)
+                if word_entries:
+                    seg_dict['words'] = word_entries
+                whisper_segments.append(seg_dict)
+
+            combined_text = ' '.join(part for part in text_parts if part).strip()
+            detected_code = None
+            if info is not None and getattr(info, 'language', None):
+                detected_code = info.language
+            elif code:
+                detected_code = code
+
+            whisper_result = {
+                'text': combined_text,
+                'language': detected_code,
+                'segments': whisper_segments,
+            }
+
+            code_map = {
+                'en': 'english',
+                'hi': 'hindi',
+                'bn': 'bengali',
+                'pa': 'punjabi',
+                'ur': 'urdu',
+                'ne': 'nepali',
+                'gu': 'gujarati',
+                'mr': 'marathi',
+            }
+            detected_lang = code_map.get(str(detected_code).lower(), language) if detected_code else language
+
+            confidence = self._calculate_transcription_confidence(whisper_result)
+
+            return {
+                'text': combined_text,
+                'language': detected_lang,
+                'confidence': confidence,
+                'words': aggregated_words,
+            }
+        except Exception as exc:
+            logger.exception('Error in fast-whisper transcription: %s', exc)
+            return None
+
     def _select_model_for_language(self, language: str) -> str:
         """Select the best model for a given language"""
         language_model_mapping = {
