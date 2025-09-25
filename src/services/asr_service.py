@@ -5,7 +5,6 @@ Whisper-based multilingual ASR with Indian language support
 import logging
 import numpy as np
 import torch
-import whisper
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 import asyncio
@@ -16,7 +15,6 @@ import time
 import soundfile as sf
 
 from src.config.app_config import app_config, model_config
-from src.models.asr_inference import ASRInference
 from src.repositories.audio_repository import AudioRepository
 from src.utils.audio_utils import AudioUtils
 from src.utils.eval_utils import EvalUtils
@@ -36,7 +34,6 @@ class ASRService:
             self.whisper_backend = 'openai'
         logger.info("Using Whisper backend: %s", self.whisper_backend)
         self.whisper_models = {}
-        self.asr_inference = ASRInference()
         self.audio_repo = AudioRepository()
         self.audio_utils = AudioUtils()
         self.eval_utils = EvalUtils()
@@ -44,6 +41,7 @@ class ASRService:
         self.whisperx_aligners = {}
         self.fast_whisper_model = None
         self.fast_whisper_options = {}
+        self.custom_models = {}  # Store custom models (e.g., Hindi2Hinglish)
         self._initialize_models()
     
     def _initialize_models(self):
@@ -63,6 +61,9 @@ class ASRService:
                 cache_path = app_config.models_dir / "whisper"
             cache_path.mkdir(parents=True, exist_ok=True)
             logger.info(f"Using Whisper cache at: {cache_path}")
+
+            # Import whisper only when needed for OpenAI backend
+            import whisper
 
             # Load main Whisper model (multilingual)
             self.whisper_models['multilingual'] = whisper.load_model(
@@ -140,9 +141,38 @@ class ASRService:
                 device,
                 compute_type,
             )
+
+            # Load custom models if configured
+            self._initialize_custom_models()
         except Exception as exc:
             logger.exception("Error initializing fast-whisper model: %s", exc)
             raise
+
+    def _initialize_custom_models(self):
+        """Initialize custom models (e.g., Hindi2Hinglish)"""
+        try:
+            # Load Hindi2Hinglish model if configured
+            if (getattr(model_config, 'use_custom_hindi_model', False) and
+                getattr(model_config, 'hindi2hinglish_model_path', None)):
+
+                hindi_model_path = model_config.hindi2hinglish_model_path
+                device = getattr(model_config, 'fast_whisper_device', 'cuda')
+                compute_type = getattr(model_config, 'fast_whisper_compute_type', 'float16')
+
+                logger.info(f"Loading Hindi2Hinglish model from: {hindi_model_path}")
+
+                from faster_whisper import WhisperModel
+                self.custom_models['hindi2hinglish'] = WhisperModel(
+                    hindi_model_path,
+                    device=device,
+                    compute_type=compute_type
+                )
+
+                logger.info("Hindi2Hinglish model loaded successfully")
+
+        except Exception as e:
+            logger.warning(f"Failed to load custom models: {e}")
+            # Don't raise - continue with default model
 
     async def transcribe_segments(
         self,
@@ -470,8 +500,11 @@ class ASRService:
         lid_confidence: Optional[float],
     ) -> Optional[Dict[str, Any]]:
         """Transcribe segment using faster-whisper backend."""
-        if self.fast_whisper_model is None:
-            logger.error('Fast Whisper model is not initialized')
+        # Select appropriate model based on language
+        model = self._select_fast_whisper_model(language)
+
+        if model is None:
+            logger.error('No suitable Fast Whisper model is available')
             return None
         try:
             threshold = getattr(model_config, 'language_confidence_threshold', 0.8)
@@ -491,7 +524,6 @@ class ASRService:
                 'temperature': self.fast_whisper_options.get('temperature'),
                 'vad_filter': self.fast_whisper_options.get('vad_filter', False),
                 'word_timestamps': True,
-                'sample_rate': target_sr,
             }
             if transcribe_kwargs['language'] is None:
                 transcribe_kwargs.pop('language')
@@ -500,7 +532,7 @@ class ASRService:
             if transcribe_kwargs['temperature'] is None:
                 transcribe_kwargs.pop('temperature')
 
-            segments_iter, info = self.fast_whisper_model.transcribe(
+            segments_iter, info = model.transcribe(
                 audio,
                 **transcribe_kwargs,
             )
@@ -575,6 +607,23 @@ class ASRService:
         except Exception as exc:
             logger.exception('Error in fast-whisper transcription: %s', exc)
             return None
+
+    def _select_fast_whisper_model(self, language: str):
+        """Select the appropriate faster-whisper model based on language"""
+        language = language.lower()
+
+        # Use custom Hindi2Hinglish model for Hindi content
+        if (language in ['hindi', 'hi'] and
+            'hindi2hinglish' in self.custom_models):
+            logger.debug(f"Using Hindi2Hinglish model for language: {language}")
+            return self.custom_models['hindi2hinglish']
+
+        # Use default model for other languages
+        if self.fast_whisper_model is not None:
+            logger.debug(f"Using default model for language: {language}")
+            return self.fast_whisper_model
+
+        return None
 
     def _select_model_for_language(self, language: str) -> str:
         """Select the best model for a given language"""

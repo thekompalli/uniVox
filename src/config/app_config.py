@@ -121,6 +121,18 @@ class ModelConfig(BaseSettings):
     whisper_beam_size: int = 5
     whisper_best_of: int = 5
     whisper_temperature: float = 0.0
+
+    # Faster-Whisper Configuration
+    whisper_backend: str = "openai"  # "openai" or "fast"
+    fast_whisper_model_path: Optional[str] = None
+    fast_whisper_device: str = "cuda"
+    fast_whisper_compute_type: str = "float16"
+    fast_whisper_vad_filter: bool = False
+
+    # Custom Model Configuration
+    use_custom_hindi_model: bool = False  # Use Hindi2Hinglish model for Hindi audio
+    hindi2hinglish_model_path: Optional[str] = None
+    custom_model_languages: List[str] = ["hindi", "hinglish"]  # Languages that should use custom model
     
     # pyannote Configuration
     pyannote_model: str = "pyannote/speaker-diarization-3.1"
@@ -151,6 +163,9 @@ class ModelConfig(BaseSettings):
     silero_threshold: float = 0.5
     silero_min_speech_duration: float = 0.1
     silero_max_speech_duration: float = float('inf')
+
+    # Cache Configuration
+    huggingface_cache_dir: str = "./models/huggingface"
     
     class Config:
         env_file = ".env"

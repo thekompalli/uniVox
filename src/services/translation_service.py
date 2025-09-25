@@ -31,10 +31,8 @@ class TranslationService:
         self.pipeline_specs = {
             ('hindi', 'english'): 'Helsinki-NLP/opus-mt-hi-en',
             ('english', 'hindi'): 'Helsinki-NLP/opus-mt-en-hi',
-            ('urdu', 'english'): 'Helsinki-NLP/opus-mt-ur-en',
-            ('bengali', 'english'): 'Helsinki-NLP/opus-mt-bn-en',
-            ('english', 'bengali'): 'Helsinki-NLP/opus-mt-en-bn',
-            ('greek', 'english'): 'Helsinki-NLP/opus-mt-el-en',
+            ('punjabi', 'english'): 'Helsinki-NLP/opus-mt-pa-en',
+            ('english', 'punjabi'): 'Helsinki-NLP/opus-mt-en-pa',
         }
         self.pipelines = {}
         self.nllb_model = None
@@ -154,6 +152,9 @@ class TranslationService:
                     effective_source = self._infer_source_language(source_language_raw, script)
                     norm_target = self._normalize_language(target_language)
 
+                    # Debug logging for language detection
+                    logger.debug(f"Text: '{source_text[:50]}...' | Raw lang: {source_language_raw} | Script: {script} | Effective: {effective_source} | Target: {norm_target}")
+
                     if effective_source == norm_target:
                         script_overrides = {
                             'devanagari': 'hindi',
@@ -179,8 +180,18 @@ class TranslationService:
                             if override_lang and override_lang != norm_target:
                                 effective_source = override_lang
                     
-                    # Skip if already in target language
+                    # Skip if already in target language - but be more strict about what constitutes "same language"
+                    skip_translation = False
                     if effective_source == norm_target:
+                        if norm_target == 'english' and script == 'latin':
+                            # Only skip if source is definitely English (detected as English AND uses Latin script)
+                            skip_translation = True
+                        elif norm_target != 'english':
+                            # For non-English targets, also check if source matches target
+                            skip_translation = True
+
+                    if skip_translation:
+                        logger.debug(f"Skipping translation - same language detected: {effective_source} -> {norm_target}")
                         translation_result = {
                             'start': segment['start'],
                             'end': segment['end'],
@@ -194,12 +205,17 @@ class TranslationService:
                         }
                     else:
                         # Perform translation
+                        logger.debug(f"Attempting translation: {effective_source} -> {norm_target}")
                         translation = await self._translate_text(
                             source_text,
                             effective_source,
                             norm_target
                         )
-                        
+
+                        # If translation failed but returned original text, mark it appropriately
+                        if translation['translated_text'] == source_text and translation['method'] in ['error_fallback', 'no_translation']:
+                            logger.warning(f"Translation failed for {effective_source} -> {norm_target}: {source_text[:50]}...")
+
                         translation_result = {
                             'start': segment['start'],
                             'end': segment['end'],
@@ -511,10 +527,36 @@ class TranslationService:
             if not language:
                 return 'unknown'
             lang = language.strip().lower()
-            # Common English variants from upstream components
-            english_aliases = {'en', 'eng', 'english', 'uncertain_english', 'auto_english'}
-            if lang in english_aliases or lang.startswith('english') or 'english' in lang:
+
+            # Language mappings
+            lang_mappings = {
+                'en': 'english',
+                'eng': 'english',
+                'english': 'english',
+                'uncertain_english': 'english',
+                'auto_english': 'english',
+                'hi': 'hindi',
+                'hin': 'hindi',
+                'hindi': 'hindi',
+                'pa': 'punjabi',
+                'pan': 'punjabi',
+                'punjabi': 'punjabi',
+                'ur': 'urdu',
+                'urd': 'urdu',
+                'urdu': 'urdu',
+                'bn': 'bengali',
+                'ben': 'bengali',
+                'bengali': 'bengali'
+            }
+
+            # Check direct mapping first
+            if lang in lang_mappings:
+                return lang_mappings[lang]
+
+            # Check if it starts with or contains english
+            if lang.startswith('english') or 'english' in lang:
                 return 'english'
+
             return lang
         except Exception:
             return language or 'unknown'
@@ -550,9 +592,10 @@ class TranslationService:
         """Combine LID hint with script to infer a better source language label.
         - Devanagari script -> hindi
         - Arabic script -> urdu
-        - Else, normalized hint
+        - Script takes precedence over potentially incorrect LID hints
         """
         try:
+            # Script detection is more reliable than LID for these scripts
             if script == 'devanagari':
                 return 'hindi'
             if script == 'arabic':
@@ -561,10 +604,24 @@ class TranslationService:
                 return 'punjabi'
             if script == 'bengali':
                 return 'bengali'
+
             normalized = self._normalize_language(lang_hint)
-            if normalized in ('auto', 'unknown'):
+
+            # Only return 'english' if we have Latin script AND reasonable LID confidence
+            if normalized in ('auto', 'unknown', 'english'):
                 if script == 'latin':
                     return 'english'
+                # If non-Latin script but LID says English, assume it's wrong
+                elif script in ['devanagari', 'arabic', 'gurmukhi', 'bengali']:
+                    # Fallback based on script
+                    script_mapping = {
+                        'devanagari': 'hindi',
+                        'arabic': 'urdu',
+                        'gurmukhi': 'punjabi',
+                        'bengali': 'bengali'
+                    }
+                    return script_mapping.get(script, 'unknown')
+
             return normalized
         except Exception:
             return self._normalize_language(lang_hint)
