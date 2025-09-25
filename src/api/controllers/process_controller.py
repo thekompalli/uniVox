@@ -39,6 +39,8 @@ class ProcessController:
             quality_mode: str = Form("balanced"),
             enable_overlaps: bool = Form(True),
             min_segment_duration: float = Form(0.5),
+            translate: bool = Form(True),
+            num_speakers: Optional[int] = Form(None),
             orchestrator: OrchestratorService = Depends(get_orchestrator_service)
         ):
             """
@@ -75,7 +77,9 @@ class ProcessController:
                     speaker_gallery=gallery_list,
                     quality_mode=quality_mode,
                     enable_overlaps=enable_overlaps,
-                    min_segment_duration=min_segment_duration
+                    min_segment_duration=min_segment_duration,
+                    translate=translate,
+                    num_speakers=num_speakers
                 )
                 
                 # Create job
