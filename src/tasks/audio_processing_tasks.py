@@ -23,6 +23,10 @@ from src.services.format_service import FormatService
 from src.repositories.celery_job_repository import get_celery_job_repo
 from src.repositories.result_repository import ResultRepository
 from src.utils.error_handler import ErrorHandler
+from src.tasks.celery_app import celery_app
+from src.services.audio_processing_service import AudioProcessingService
+import asyncio
+
 
 logger = logging.getLogger(__name__)
 
@@ -662,3 +666,4 @@ def _get_system_resources() -> Dict[str, Any]:
         return {'error': 'psutil not available'}
     except Exception as e:
         return {'error': str(e)}
+

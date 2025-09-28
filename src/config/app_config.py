@@ -7,7 +7,55 @@ from typing import List, Dict, Any, Optional
 from pydantic_settings import BaseSettings
 from pydantic import validator
 from pathlib import Path
+from typing import ClassVar
+from enum import Enum
+import os
+from typing import List, Dict, Any, Optional, ClassVar
+from pydantic_settings import BaseSettings
+from pydantic import validator, Field  # Add Field here
+from pathlib import Path
+from enum import Enum
 
+
+class NoiseReductionMethodEnum(str, Enum):
+    """Noise reduction method options"""
+    AUTO = "auto"
+    ADVANCED_SPECTRAL = "advanced_spectral"
+    ADAPTIVE_WIENER = "adaptive_wiener"
+    MULTI_BAND = "multi_band"
+    HYBRID = "hybrid"
+    BASIC = "basic"
+
+class NoiseRemovalConfig(BaseSettings):
+    """Configuration for noise removal functionality"""
+    
+    # Default noise removal settings
+    default_method: NoiseReductionMethodEnum = NoiseReductionMethodEnum.AUTO
+    default_strength: float = Field(default=0.8, ge=0.0, le=1.0, description="Noise reduction strength")
+    preserve_speech: bool = Field(default=True, description="Prioritize speech preservation")
+    auto_detect_method: bool = Field(default=True, description="Automatically detect best method")
+    
+    # SNR thresholds for triggering noise removal
+    snr_threshold_advanced: float = Field(default=15.0, description="Use advanced methods below this SNR")
+    snr_threshold_basic: float = Field(default=10.0, description="Use basic methods below this SNR")
+    
+    # Method selection parameters
+    very_noisy_snr_threshold: float = Field(default=5.0, description="Use multi-band for very noisy audio")
+    speech_heavy_ratio: float = Field(default=0.7, description="Use adaptive Wiener for speech-heavy audio")
+    low_freq_noise_ratio: float = Field(default=0.4, description="Use multi-band for low-frequency noise")
+    
+    # Processing parameters
+    stft_n_fft: int = Field(default=1024, description="STFT window size")
+    stft_hop_length: int = Field(default=256, description="STFT hop length")
+    noise_estimation_frames: int = Field(default=10, description="Frames for noise estimation")
+    
+    # Quality assessment thresholds
+    excellent_snr_improvement: float = Field(default=3.0, description="SNR improvement for excellent rating")
+    good_snr_improvement: float = Field(default=1.0, description="SNR improvement for good rating")
+    
+    class Config:
+        env_prefix = "NOISE_REMOVAL_"
+        case_sensitive = False
 
 class AppConfig(BaseSettings):
     """Main application configuration"""
@@ -102,6 +150,74 @@ class AppConfig(BaseSettings):
         """Create directories if they don't exist"""
         v.mkdir(parents=True, exist_ok=True)
         return v
+    
+       # Audio Processing Settings (existing)
+    max_file_size: int = 500 * 1024 * 1024  # 500MB
+    supported_formats: List[str] = ["wav", "mp3", "ogg", "flac", "m4a"]
+    target_sample_rate: int = 16000
+    target_channels: int = 1
+    chunk_duration: int = 30  # seconds
+    
+    # ADD THESE NEW NOISE REMOVAL FIELDS:
+    # Noise Removal Settings
+    enable_advanced_noise_removal: bool = Field(default=True, description="Enable advanced noise removal")
+    default_noise_removal_method: NoiseReductionMethodEnum = Field(
+        default=NoiseReductionMethodEnum.AUTO, 
+        description="Default noise removal method"
+    )
+    noise_removal_strength: float = Field(
+        default=0.8, 
+        ge=0.0, 
+        le=1.0, 
+        description="Default noise reduction strength"
+    )
+    noise_removal_preserve_speech: bool = Field(
+        default=True, 
+        description="Prioritize speech preservation during noise removal"
+    )
+    noise_removal_auto_detect: bool = Field(
+        default=True, 
+        description="Automatically detect best noise removal method"
+    )
+    
+    # Noise removal thresholds
+    noise_removal_snr_threshold_advanced: float = Field(
+        default=15.0, 
+        description="SNR threshold for advanced noise removal"
+    )
+    noise_removal_snr_threshold_basic: float = Field(
+        default=10.0, 
+        description="SNR threshold for basic noise removal"
+    )
+    
+    # Advanced noise removal parameters
+    noise_removal_stft_n_fft: int = Field(default=1024, description="STFT window size for noise removal")
+    noise_removal_stft_hop_length: int = Field(default=256, description="STFT hop length for noise removal")
+    noise_removal_estimation_frames: int = Field(default=10, description="Frames for noise estimation")
+    
+    # Keep all your existing fields and methods...
+    # Model Settings
+    triton_url: str = "localhost:8001"
+    use_triton: bool = False
+    device: str = "cuda"
+    batch_size: int = 4
+
+    @property
+    def noise_removal_config(self) -> Dict[str, Any]:
+        """Get noise removal configuration as a dictionary"""
+        return {
+            'enabled': self.enable_advanced_noise_removal,
+            'method': self.default_noise_removal_method.value,
+            'strength': self.noise_removal_strength,
+            'preserve_speech': self.noise_removal_preserve_speech,
+            'auto_detect_method': self.noise_removal_auto_detect,
+            'snr_threshold_advanced': self.noise_removal_snr_threshold_advanced,
+            'snr_threshold_basic': self.noise_removal_snr_threshold_basic,
+            'stft_n_fft': self.noise_removal_stft_n_fft,
+            'stft_hop_length': self.noise_removal_stft_hop_length,
+            'estimation_frames': self.noise_removal_estimation_frames
+        }
+
     
     class Config:
         env_file = ".env"
@@ -235,9 +351,40 @@ class LoggingConfig:
             "handlers": ["default", "file"],
         },
     }
-
+    
+class NoiseRemovalConfigHelper:
+    """Helper class to provide noise removal configuration"""
+    
+    def __init__(self, app_config: AppConfig):
+        self.app_config = app_config
+    
+    @property
+    def default_method(self) -> str:
+        return self.app_config.default_noise_removal_method.value
+    
+    @property
+    def default_strength(self) -> float:
+        return self.app_config.noise_removal_strength
+    
+    @property
+    def preserve_speech(self) -> bool:
+        return self.app_config.noise_removal_preserve_speech
+    
+    @property
+    def auto_detect_method(self) -> bool:
+        return self.app_config.noise_removal_auto_detect
+    
+    @property
+    def snr_threshold_advanced(self) -> float:
+        return self.app_config.noise_removal_snr_threshold_advanced
+    
+    @property
+    def snr_threshold_basic(self) -> float:
+        return self.app_config.noise_removal_snr_threshold_basic    
 
 # Global configuration instances
 app_config = AppConfig()
 model_config = ModelConfig()
 logging_config = LoggingConfig()
+# Add this line:
+noise_removal_helper = NoiseRemovalConfigHelper(app_config)
