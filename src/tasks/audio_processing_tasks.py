@@ -183,16 +183,28 @@ def diarize_speakers(self, job_id: str, request_params: Dict[str, Any] = None):
             num_speakers=num_speakers
         )
         
-        # Speaker identification
-        identification_result = speaker_service.identify_speakers_sync(
-            job_id, 
-            diarization_result['segments']
-        )
-        
-        # Combine results
+        # Speaker identification - properly match against gallery
+# Need to call async version with audio data
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        try:
+             identification_result = loop.run_until_complete(
+                    speaker_service.identify_speakers(
+                        job_id=job_id,
+                        audio_data=processed_data['audio_data'],
+                        sample_rate=processed_data['sample_rate'],
+                        segments=diarization_result['segments'],
+                        speaker_gallery=None  # Will auto-load from gallery
+                    )
+                )
+        finally:
+             loop.close()
+
+# Combine results
         result = {
-            'diarization': diarization_result,
-            'identification': identification_result
+           'diarization': diarization_result,
+           'identification': identification_result
         }
 
         # Persist results for downstream/debugging

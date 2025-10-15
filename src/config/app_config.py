@@ -166,6 +166,9 @@ class ModelConfig(BaseSettings):
 
     # Cache Configuration
     huggingface_cache_dir: str = "./models/huggingface"
+
+    speaker_similarity_threshold: float = 0.6  # Minimum similarity to match
+    min_speaker_confidence: float = 0.5
     
     class Config:
         env_file = ".env"
