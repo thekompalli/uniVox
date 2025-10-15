@@ -14,6 +14,7 @@ def install_basic_requirements():
         'fastapi==0.104.1',
         'uvicorn[standard]==0.24.0',
         'pydantic==2.5.0',
+        'pydantic-settings==2.1.0',
         'numpy==1.24.3',
         'soundfile==0.12.1',
         'python-multipart==0.0.6',
@@ -33,7 +34,8 @@ def install_basic_requirements():
     optional_packages = [
         'torch==2.1.0',
         'transformers==4.35.2',
-        'openai-whisper==20231117'
+        'openai-whisper==20231117',
+        'faster-whisper==1.0.3'
     ]
     
     print("\n🔬 Installing optional ML packages...")

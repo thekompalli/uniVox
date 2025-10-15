@@ -75,7 +75,7 @@ class LanguageIdentificationService:
                     if lang.lower() in self.supported_languages
                 ]
             
-            # Process segments for language identification
+            # Process segments for language identification (with code-switch subsegmentation)
             language_segments = []
             language_distribution = {}
             
@@ -85,42 +85,57 @@ class LanguageIdentificationService:
                     start_sample = int(segment['start'] * sample_rate)
                     end_sample = int(segment['end'] * sample_rate)
                     segment_audio = audio_data[start_sample:end_sample]
-                    
+
                     # Skip very short segments
-                    if len(segment_audio) < sample_rate * 0.5:  # 0.5 second minimum
+                    if len(segment_audio) < int(sample_rate * 0.5):  # 0.5 second minimum
                         continue
-                    
-                    # Identify language for segment
-                    language_result = await self._identify_segment_language(
-                        segment_audio, sample_rate, expected_languages
+
+                    # Sub-segment by language (code-switch handling)
+                    subsegments = await self._subsegment_by_language(
+                        segment_audio=segment_audio,
+                        seg_start=segment['start'],
+                        sample_rate=sample_rate,
+                        expected_languages=expected_languages
                     )
-                    
-                    # Create language segment
-                    lang_segment = {
-                        'start': segment['start'],
-                        'end': segment['end'],
-                        'duration': segment.get('duration', segment['end'] - segment['start']),
-                        'language': language_result['language'],
-                        'confidence': language_result['confidence'],
-                        'all_probabilities': language_result['probabilities'],
-                        'confidence_level': self._get_confidence_level(language_result['confidence']),
-                        'speaker': segment.get('speaker', f'speaker_{i}')
-                    }
-                    
-                    language_segments.append(lang_segment)
-                    
-                    # Update language distribution
-                    lang = language_result['language']
-                    if lang not in language_distribution:
-                        language_distribution[lang] = {
-                            'segments': 0,
-                            'total_duration': 0.0,
-                            'avg_confidence': 0.0
+
+                    if not subsegments:
+                        # Fallback: treat entire segment as one language
+                        language_result = await self._identify_segment_language(
+                            segment_audio, sample_rate, expected_languages
+                        )
+                        subsegments = [{
+                            'start': segment['start'],
+                            'end': segment['end'],
+                            'language': language_result['language'],
+                            'confidence': language_result['confidence'],
+                            'all_probabilities': language_result['probabilities']
+                        }]
+
+                    # Attach speaker + confidence level, accumulate distribution
+                    for sub in subsegments:
+                        dur = float(sub['end'] - sub['start'])
+                        lang_segment = {
+                            'start': float(sub['start']),
+                            'end': float(sub['end']),
+                            'duration': dur,
+                            'language': sub['language'],
+                            'confidence': float(sub.get('confidence', 0.0)),
+                            'all_probabilities': sub.get('all_probabilities', {}),
+                            'confidence_level': self._get_confidence_level(float(sub.get('confidence', 0.0))),
+                            'speaker': segment.get('speaker', f'speaker_{i}')
                         }
-                    
-                    language_distribution[lang]['segments'] += 1
-                    language_distribution[lang]['total_duration'] += lang_segment['duration']
-                    language_distribution[lang]['avg_confidence'] += language_result['confidence']
+                        language_segments.append(lang_segment)
+
+                        lang = sub['language']
+                        if lang not in language_distribution:
+                            language_distribution[lang] = {
+                                'segments': 0,
+                                'total_duration': 0.0,
+                                'avg_confidence': 0.0
+                            }
+                        language_distribution[lang]['segments'] += 1
+                        language_distribution[lang]['total_duration'] += dur
+                        language_distribution[lang]['avg_confidence'] += float(sub.get('confidence', 0.0))
                     
                 except Exception as e:
                     logger.warning(f"Error processing segment {i}: {e}")
@@ -165,6 +180,81 @@ class LanguageIdentificationService:
         except Exception as e:
             logger.exception(f"Error in language identification for job {job_id}: {e}")
             raise
+
+    async def _subsegment_by_language(
+        self,
+        segment_audio: np.ndarray,
+        seg_start: float,
+        sample_rate: int,
+        expected_languages: Optional[List[str]] = None,
+        window_ms: int = 700,
+        hop_ms: int = 350,
+        min_subseg_s: float = 0.5
+    ) -> List[Dict[str, Any]]:
+        """Detect code-switches inside a segment via sliding-window LID and merge.
+
+        Returns list of subsegments with start, end, language, confidence, and probabilities.
+        """
+        try:
+            win_samples = max(1, int(sample_rate * window_ms / 1000))
+            hop_samples = max(1, int(sample_rate * hop_ms / 1000))
+            total = len(segment_audio)
+
+            windows: List[Dict[str, Any]] = []
+            pos = 0
+            while pos + win_samples <= total:
+                chunk = segment_audio[pos:pos + win_samples]
+                # Identify language for this window synchronously
+                lid = self.language_inference.identify_language_sync(
+                    chunk, sample_rate, expected_languages
+                )
+                start_t = seg_start + (pos / sample_rate)
+                end_t = seg_start + ((pos + win_samples) / sample_rate)
+                windows.append({
+                    'start': start_t,
+                    'end': end_t,
+                    'language': lid.get('language', 'unknown'),
+                    'confidence': float(lid.get('confidence', 0.0)),
+                    'all_probabilities': lid.get('probabilities', {})
+                })
+                pos += hop_samples
+
+            if not windows:
+                return []
+
+            # Merge contiguous windows with same language (majority vote smoothing)
+            merged: List[Dict[str, Any]] = []
+            cur = windows[0].copy()
+            for w in windows[1:]:
+                if w['language'] == cur['language']:
+                    # extend and accumulate confidence as average
+                    cur['end'] = w['end']
+                    cur['confidence'] = float((cur['confidence'] + w['confidence']) / 2.0)
+                else:
+                    merged.append(cur)
+                    cur = w.copy()
+            merged.append(cur)
+
+            # Filter very short subsegments; try to merge with neighbors
+            filtered: List[Dict[str, Any]] = []
+            for m in merged:
+                if (m['end'] - m['start']) >= min_subseg_s or not filtered:
+                    filtered.append(m)
+                else:
+                    # merge into previous
+                    prev = filtered[-1]
+                    if prev['language'] == m['language']:
+                        prev['end'] = m['end']
+                        prev['confidence'] = float((prev['confidence'] + m['confidence']) / 2.0)
+                    else:
+                        # choose the longer by window counts; here append as-is
+                        filtered.append(m)
+
+            return filtered
+
+        except Exception as e:
+            logger.warning(f"Subsegmentation failed, using whole segment: {e}")
+            return []
     
     async def _create_speech_segments(
         self,

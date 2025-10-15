@@ -575,3 +575,412 @@ class AudioUtils:
         except Exception as e:
             logger.exception(f"Error calculating audio features: {e}")
             return {}
+    # Add these methods to your src/utils/audio_utils.py file
+# Add these methods to your src/utils/audio_utils.py file
+
+    def remove_background_noise(
+        self, 
+        audio: np.ndarray, 
+        sample_rate: int,
+        method: str = 'advanced_spectral',
+        noise_reduction_strength: float = 0.8,
+        preserve_speech: bool = True
+    ) -> np.ndarray:
+        """
+        Advanced background noise removal with multiple techniques
+        
+        Args:
+            audio: Input audio signal
+            sample_rate: Sample rate
+            method: Noise reduction method ('advanced_spectral', 'adaptive_wiener', 'rnnoise', 'multi_band')
+            noise_reduction_strength: Strength of noise reduction (0.0 to 1.0)
+            preserve_speech: Whether to prioritize speech preservation
+            
+        Returns:
+            Noise-reduced audio signal
+        """
+        try:
+            logger.info(f"Applying background noise removal with method: {method}")
+            
+            if method == 'advanced_spectral':
+                return self._advanced_spectral_subtraction(audio, sample_rate, noise_reduction_strength)
+            elif method == 'adaptive_wiener':
+                return self._adaptive_wiener_filter(audio, sample_rate, preserve_speech)
+            elif method == 'multi_band':
+                return self._multi_band_noise_reduction(audio, sample_rate, noise_reduction_strength)
+            elif method == 'rnnoise':
+                return self._rnn_noise_reduction(audio, sample_rate)
+            else:
+                logger.warning(f"Unknown noise reduction method: {method}, using default")
+                return self.reduce_noise(audio, sample_rate)
+                
+        except Exception as e:
+            logger.exception(f"Error in background noise removal: {e}")
+            return audio
+
+    def _advanced_spectral_subtraction(
+        self, 
+        audio: np.ndarray, 
+        sample_rate: int,
+        strength: float = 0.8
+    ) -> np.ndarray:
+        """Advanced spectral subtraction with improved speech preservation"""
+        try:
+            # Parameters
+            hop_length = 256
+            n_fft = 1024
+            
+            # STFT
+            stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
+            magnitude = np.abs(stft)
+            phase = np.angle(stft)
+            
+            # Improved noise estimation using multiple methods
+            noise_estimate = self._estimate_noise_spectrum(magnitude, method='multi_frame')
+            
+            # Adaptive spectral subtraction with voice activity detection
+            vad_mask = self._simple_vad_mask(magnitude, noise_estimate)
+            
+            # Apply spectral subtraction with adaptive parameters
+            alpha = 2.0 * strength  # Over-subtraction factor
+            beta = 0.01  # Spectral floor factor
+            
+            # Calculate subtraction with VAD consideration
+            subtracted_magnitude = np.zeros_like(magnitude)
+            for freq_bin in range(magnitude.shape[0]):
+                for frame in range(magnitude.shape[1]):
+                    if vad_mask[freq_bin, frame]:  # Speech present
+                        # Less aggressive subtraction for speech frames
+                        subtraction_factor = alpha * 0.5
+                    else:  # Noise only
+                        # More aggressive subtraction for noise frames
+                        subtraction_factor = alpha
+                    
+                    noise_level = noise_estimate[freq_bin, 0] if noise_estimate.shape[1] == 1 else noise_estimate[freq_bin, frame]
+                    subtracted_magnitude[freq_bin, frame] = magnitude[freq_bin, frame] - subtraction_factor * noise_level
+                    
+                    # Apply spectral floor
+                    min_magnitude = beta * magnitude[freq_bin, frame]
+                    subtracted_magnitude[freq_bin, frame] = max(subtracted_magnitude[freq_bin, frame], min_magnitude)
+            
+            # Reconstruct signal
+            enhanced_stft = subtracted_magnitude * np.exp(1j * phase)
+            enhanced_audio = librosa.istft(enhanced_stft, hop_length=hop_length)
+            
+            # Post-processing: smooth transitions
+            enhanced_audio = self._smooth_audio_transitions(enhanced_audio, sample_rate)
+            
+            return enhanced_audio
+            
+        except Exception as e:
+            logger.exception(f"Error in advanced spectral subtraction: {e}")
+            return audio
+
+    def _adaptive_wiener_filter(
+        self, 
+        audio: np.ndarray, 
+        sample_rate: int,
+        preserve_speech: bool = True
+    ) -> np.ndarray:
+        """Adaptive Wiener filter with speech detection"""
+        try:
+            # STFT parameters
+            hop_length = 256
+            n_fft = 1024
+            
+            stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
+            magnitude = np.abs(stft)
+            phase = np.angle(stft)
+            power_spectrum = magnitude ** 2
+            
+            # Estimate noise power spectrum
+            noise_power = self._estimate_noise_power_spectrum(power_spectrum)
+            
+            # Calculate Wiener gain for each time-frequency bin
+            wiener_gain = np.zeros_like(power_spectrum)
+            
+            for freq_bin in range(power_spectrum.shape[0]):
+                for frame in range(power_spectrum.shape[1]):
+                    signal_power = power_spectrum[freq_bin, frame]
+                    noise_power_estimate = noise_power[freq_bin, 0] if noise_power.shape[1] == 1 else noise_power[freq_bin, frame]
+                    
+                    # Adaptive gain calculation
+                    if preserve_speech:
+                        # Use speech-aware gain calculation
+                        speech_probability = self._estimate_speech_probability(
+                            signal_power, noise_power_estimate, freq_bin, sample_rate
+                        )
+                        min_gain = 0.1 + 0.4 * speech_probability  # Higher floor for speech
+                    else:
+                        min_gain = 0.1
+                    
+                    gain = signal_power / (signal_power + noise_power_estimate + 1e-8)
+                    wiener_gain[freq_bin, frame] = max(gain, min_gain)
+            
+            # Apply Wiener filter
+            filtered_magnitude = magnitude * wiener_gain
+            enhanced_stft = filtered_magnitude * np.exp(1j * phase)
+            enhanced_audio = librosa.istft(enhanced_stft, hop_length=hop_length)
+            
+            return enhanced_audio
+            
+        except Exception as e:
+            logger.exception(f"Error in adaptive Wiener filter: {e}")
+            return audio
+
+    def _multi_band_noise_reduction(
+        self, 
+        audio: np.ndarray, 
+        sample_rate: int,
+        strength: float = 0.8
+    ) -> np.ndarray:
+        """Multi-band noise reduction for better preservation of speech characteristics"""
+        try:
+            # Define frequency bands (Hz)
+            bands = [
+                (0, 300),      # Low frequencies
+                (300, 1000),   # Low-mid frequencies  
+                (1000, 3000),  # Mid frequencies (speech critical)
+                (3000, 6000),  # High-mid frequencies
+                (6000, sample_rate//2)  # High frequencies
+            ]
+            
+            # STFT
+            hop_length = 256
+            n_fft = 1024
+            stft = librosa.stft(audio, n_fft=n_fft, hop_length=hop_length)
+            magnitude = np.abs(stft)
+            phase = np.angle(stft)
+            
+            # Frequency bins
+            freqs = librosa.fft_frequencies(sr=sample_rate, n_fft=n_fft)
+            
+            enhanced_magnitude = magnitude.copy()
+            
+            # Process each frequency band separately
+            for i, (low_freq, high_freq) in enumerate(bands):
+                # Find frequency bin range for this band
+                band_mask = (freqs >= low_freq) & (freqs < high_freq)
+                band_indices = np.where(band_mask)[0]
+                
+                if len(band_indices) == 0:
+                    continue
+                
+                # Extract band magnitude
+                band_magnitude = magnitude[band_indices, :]
+                
+                # Band-specific noise reduction parameters
+                if low_freq >= 1000 and high_freq <= 3000:
+                    # Speech critical band - less aggressive
+                    band_strength = strength * 0.6
+                    min_gain = 0.3
+                elif low_freq < 300:
+                    # Low frequency band - more aggressive (often contains noise)
+                    band_strength = strength * 1.2
+                    min_gain = 0.1
+                else:
+                    # Other bands - standard processing
+                    band_strength = strength
+                    min_gain = 0.2
+                
+                # Apply noise reduction to this band
+                noise_estimate = np.mean(band_magnitude[:, :5], axis=1, keepdims=True)  # First 5 frames
+                
+                for j, freq_idx in enumerate(band_indices):
+                    for frame in range(magnitude.shape[1]):
+                        original_mag = magnitude[freq_idx, frame]
+                        noise_level = noise_estimate[j, 0]
+                        
+                        # Calculate reduction
+                        reduction_factor = band_strength * (noise_level / (original_mag + 1e-8))
+                        reduction_factor = min(reduction_factor, 0.9)  # Limit max reduction
+                        
+                        # Apply reduction with minimum gain
+                        gain = max(1.0 - reduction_factor, min_gain)
+                        enhanced_magnitude[freq_idx, frame] = original_mag * gain
+            
+            # Reconstruct signal
+            enhanced_stft = enhanced_magnitude * np.exp(1j * phase)
+            enhanced_audio = librosa.istft(enhanced_stft, hop_length=hop_length)
+            
+            return enhanced_audio
+            
+        except Exception as e:
+            logger.exception(f"Error in multi-band noise reduction: {e}")
+            return audio
+
+    def _estimate_noise_spectrum(
+        self, 
+        magnitude: np.ndarray, 
+        method: str = 'multi_frame'
+    ) -> np.ndarray:
+        """Improved noise spectrum estimation"""
+        try:
+            if method == 'multi_frame':
+                # Use multiple frames for better noise estimation
+                num_noise_frames = min(10, magnitude.shape[1] // 4)
+                
+                # Use both beginning and end frames (assuming they contain noise)
+                start_frames = magnitude[:, :num_noise_frames//2]
+                end_frames = magnitude[:, -num_noise_frames//2:] if magnitude.shape[1] > num_noise_frames else magnitude[:, :1]
+                
+                # Combine estimates
+                noise_spectrum = np.minimum(
+                    np.mean(start_frames, axis=1, keepdims=True),
+                    np.mean(end_frames, axis=1, keepdims=True)
+                )
+                
+            elif method == 'minimum_tracking':
+                # Track minimum values across time for each frequency bin
+                window_size = min(20, magnitude.shape[1] // 2)
+                noise_spectrum = np.zeros((magnitude.shape[0], 1))
+                
+                for freq_bin in range(magnitude.shape[0]):
+                    # Use minimum tracking for noise estimation
+                    windowed_mins = []
+                    for i in range(0, magnitude.shape[1] - window_size + 1, window_size // 2):
+                        window_min = np.min(magnitude[freq_bin, i:i+window_size])
+                        windowed_mins.append(window_min)
+                    
+                    noise_spectrum[freq_bin, 0] = np.median(windowed_mins) if windowed_mins else np.min(magnitude[freq_bin, :])
+            
+            else:
+                # Default: use first few frames
+                num_frames = min(5, magnitude.shape[1] // 4)
+                noise_spectrum = np.mean(magnitude[:, :num_frames], axis=1, keepdims=True)
+            
+            return noise_spectrum
+            
+        except Exception as e:
+            logger.exception(f"Error estimating noise spectrum: {e}")
+            # Fallback to simple estimation
+            return np.mean(magnitude[:, :5], axis=1, keepdims=True)
+
+    def _simple_vad_mask(
+        self, 
+        magnitude: np.ndarray, 
+        noise_estimate: np.ndarray
+    ) -> np.ndarray:
+        """Simple voice activity detection mask"""
+        try:
+            # Calculate SNR for each time-frequency bin
+            snr_threshold = 3.0  # dB
+            snr_linear_threshold = 10**(snr_threshold / 10)
+            
+            vad_mask = np.zeros_like(magnitude, dtype=bool)
+            
+            for freq_bin in range(magnitude.shape[0]):
+                noise_level = noise_estimate[freq_bin, 0] if noise_estimate.shape[1] == 1 else noise_estimate[freq_bin, :]
+                
+                # Calculate local SNR
+                local_snr = (magnitude[freq_bin, :] ** 2) / (noise_level ** 2 + 1e-8)
+                
+                # Mark as speech if SNR is above threshold
+                vad_mask[freq_bin, :] = local_snr > snr_linear_threshold
+            
+            # Apply temporal smoothing to reduce false positives
+            from scipy import ndimage
+            vad_mask = ndimage.binary_opening(vad_mask, structure=np.ones((3, 3)))
+            
+            return vad_mask
+            
+        except Exception as e:
+            logger.exception(f"Error creating VAD mask: {e}")
+            return np.ones_like(magnitude, dtype=bool)  # Default to all speech
+
+    def _estimate_noise_power_spectrum(self, power_spectrum: np.ndarray) -> np.ndarray:
+        """Estimate noise power spectrum using minimum statistics"""
+        try:
+            # Use minimum tracking across time for each frequency bin
+            window_length = min(20, power_spectrum.shape[1] // 3)
+            noise_power = np.zeros((power_spectrum.shape[0], 1))
+            
+            for freq_bin in range(power_spectrum.shape[0]):
+                # Track minimum power in sliding windows
+                min_values = []
+                for i in range(0, power_spectrum.shape[1] - window_length + 1, window_length // 2):
+                    window_min = np.min(power_spectrum[freq_bin, i:i+window_length])
+                    min_values.append(window_min)
+                
+                # Use median of minimums as noise estimate
+                noise_power[freq_bin, 0] = np.median(min_values) if min_values else np.min(power_spectrum[freq_bin, :])
+            
+            return noise_power
+            
+        except Exception as e:
+            logger.exception(f"Error estimating noise power spectrum: {e}")
+            return np.mean(power_spectrum[:, :5], axis=1, keepdims=True)
+
+    def _estimate_speech_probability(
+        self, 
+        signal_power: float, 
+        noise_power: float, 
+        freq_bin: int, 
+        sample_rate: int
+    ) -> float:
+        """Estimate probability that current frame contains speech"""
+        try:
+            # Calculate SNR
+            snr = signal_power / (noise_power + 1e-8)
+            snr_db = 10 * np.log10(snr)
+            
+            # Base probability from SNR
+            if snr_db > 10:
+                snr_prob = 0.9
+            elif snr_db > 5:
+                snr_prob = 0.7
+            elif snr_db > 0:
+                snr_prob = 0.5
+            else:
+                snr_prob = 0.2
+            
+            # Frequency-based probability (speech is more likely in certain frequency ranges)
+            freq_hz = freq_bin * sample_rate / 2048  # Assuming n_fft=1024
+            
+            if 300 <= freq_hz <= 3000:  # Primary speech frequencies
+                freq_prob = 0.8
+            elif 100 <= freq_hz <= 6000:  # Extended speech range
+                freq_prob = 0.6
+            else:
+                freq_prob = 0.3
+            
+            # Combine probabilities
+            speech_probability = (snr_prob + freq_prob) / 2
+            return min(speech_probability, 1.0)
+            
+        except Exception as e:
+            logger.exception(f"Error estimating speech probability: {e}")
+            return 0.5  # Default moderate probability
+
+    def _smooth_audio_transitions(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+        """Apply smooth transitions to reduce artifacts"""
+        try:
+            # Simple high-frequency smoothing to reduce artifacts
+            from scipy import signal
+            
+            # Design a gentle low-pass filter to remove artifacts above speech range
+            nyquist = sample_rate / 2
+            cutoff = min(8000, nyquist * 0.9)  # Cutoff at 8kHz or 90% of Nyquist
+            
+            # Butterworth filter
+            sos = signal.butter(4, cutoff, btype='low', fs=sample_rate, output='sos')
+            smoothed_audio = signal.sosfilt(sos, audio)
+            
+            return smoothed_audio
+            
+        except Exception as e:
+            logger.exception(f"Error smoothing audio transitions: {e}")
+            return audio
+
+    def _rnn_noise_reduction(self, audio: np.ndarray, sample_rate: int) -> np.ndarray:
+        """
+        RNN-based noise reduction (placeholder for future implementation)
+        This would require a trained RNN model for noise reduction
+        """
+        try:
+            logger.info("RNN noise reduction not implemented, falling back to spectral subtraction")
+            return self._advanced_spectral_subtraction(audio, sample_rate, 0.8)
+            
+        except Exception as e:
+            logger.exception(f"Error in RNN noise reduction: {e}")
+            return audio  

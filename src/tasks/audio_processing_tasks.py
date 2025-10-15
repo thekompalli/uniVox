@@ -5,6 +5,7 @@ Celery tasks for async audio processing pipeline
 import logging
 import traceback
 from datetime import datetime, timedelta
+import asyncio
 from typing import Dict, Any, List
 
 from celery import chain, group
@@ -22,6 +23,10 @@ from src.services.format_service import FormatService
 from src.repositories.celery_job_repository import get_celery_job_repo
 from src.repositories.result_repository import ResultRepository
 from src.utils.error_handler import ErrorHandler
+from src.tasks.celery_app import celery_app
+from src.services.audio_processing_service import AudioProcessingService
+import asyncio
+
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +52,8 @@ def process_audio_pipeline(self, job_id: str, request_params: Dict[str, Any]):
         # Create processing chain (sequential to avoid blocking on group semantics)
         pipeline = chain(
             preprocess_audio.si(job_id, request_params),
-            diarize_speakers.si(job_id),
-            identify_languages.si(job_id),
+            diarize_speakers.si(job_id, request_params),
+            identify_languages.si(job_id, request_params),
             transcribe_audio.si(job_id, request_params),
             translate_text.si(job_id, request_params),
             generate_outputs.si(job_id, request_params)
@@ -146,7 +151,7 @@ def preprocess_audio(self, job_id: str, request_params: Dict[str, Any]):
 
 
 @celery_app.task(bind=True, ignore_result=True)
-def diarize_speakers(self, job_id: str):
+def diarize_speakers(self, job_id: str, request_params: Dict[str, Any] = None):
     """
     Speaker diarization task
     
@@ -168,10 +173,18 @@ def diarize_speakers(self, job_id: str):
         # Load processed audio data
         processed_data = diarization_service.load_processed_data_sync(job_id)
         
-        # Perform diarization
+        # Perform diarization (optionally with speaker count hint)
+        num_speakers = None
+        try:
+            if request_params and isinstance(request_params, dict):
+                num_speakers = request_params.get('num_speakers')
+        except Exception:
+            num_speakers = None
+
         diarization_result = diarization_service.diarize_audio_sync(
             processed_data['audio_data'],
-            processed_data['sample_rate']
+            processed_data['sample_rate'],
+            num_speakers=num_speakers
         )
         
         # Speaker identification
@@ -210,7 +223,7 @@ def diarize_speakers(self, job_id: str):
 
 
 @celery_app.task(bind=True, ignore_result=True)
-def identify_languages(self, job_id: str):
+def identify_languages(self, job_id: str, request_params: Dict[str, Any] = None):
     """
     Language identification task
     
@@ -245,11 +258,19 @@ def identify_languages(self, job_id: str):
             pass
 
         # Perform language identification
+        expected_langs = None
+        try:
+            if request_params and isinstance(request_params, dict):
+                expected_langs = request_params.get('languages')
+        except Exception:
+            expected_langs = None
+
         result = language_service.identify_languages_sync(
             job_id,
             processed_data['audio_data'],
             processed_data['sample_rate'],
-            segments
+            segments,
+            expected_languages=expected_langs
         )
 
         # Persist language identification results
@@ -346,7 +367,50 @@ def translate_text(self, job_id: str, request_params: Dict[str, Any]):
     """
     try:
         logger.info(f"Starting translation for job {job_id}")
-        
+
+        # Allow disabling translation (Whisper transcribe-only mode)
+        try:
+            if request_params is not None and request_params.get('translate') is False:
+                logger.info(f"Translation disabled by request for job {job_id}; generating passthrough results")
+                _update_job_status(job_id, JobState.TRANSLATION, 0.9, "Translation skipped (passthrough)")
+                # Build no-translation results from ASR output
+                translation_service = TranslationService()
+                transcription_data = translation_service.load_transcription_results_sync(job_id)
+                segments = []
+                for seg in transcription_data.get('segments', []):
+                    segments.append({
+                        'start': seg.get('start'),
+                        'end': seg.get('end'),
+                        'speaker': seg.get('speaker'),
+                        'source_language': seg.get('language', 'unknown'),
+                        'target_language': 'english',
+                        'source_text': seg.get('text', ''),
+                        'translated_text': seg.get('text', ''),
+                        'translation_confidence': 1.0,
+                        'translation_method': 'no_translation'
+                    })
+                # Persist and return in the same format as normal translation (sync context)
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(
+                        translation_service._save_translation_results(job_id, {
+                            'segments': segments,
+                            'quality_metrics': translation_service._calculate_translation_quality(segments) if segments else {},
+                            'total_segments': len(segments),
+                            'languages_translated': list({s.get('source_language','unknown') for s in segments})
+                        })
+                    )
+                finally:
+                    try:
+                        loop.close()
+                    except Exception:
+                        pass
+                logger.info(f"Translation passthrough completed for job {job_id}")
+                return {'segments': segments, 'quality_metrics': {}, 'total_segments': len(segments)}
+        except Exception as guard_exc:
+            logger.warning(f"Translation disable guard failed; proceeding with normal translation: {guard_exc}")
+
         _update_job_status(job_id, JobState.TRANSLATION, 0.9, "Translating text")
         
         # Initialize service
@@ -602,3 +666,4 @@ def _get_system_resources() -> Dict[str, Any]:
         return {'error': 'psutil not available'}
     except Exception as e:
         return {'error': str(e)}
+

@@ -12,6 +12,8 @@ import uuid
 from datetime import datetime
 from typing import Optional, List
 import sys
+from fastapi import APIRouter, UploadFile, File, Form
+from pydantic import BaseModel
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent
@@ -310,7 +312,65 @@ async def general_exception_handler(request, exc):
             "detail": str(exc)
         }
     )
+    class NoiseRemovalRequest(BaseModel):
+        method: str = 'auto'
+        strength: float = 0.8
+        preserve_speech: bool = True
+        auto_detect_method: bool = True
 
+    class NoiseRemovalResponse(BaseModel):
+        job_id: str
+        status: str
+        method_used: str
+        snr_improvement: float
+        processing_time: float
+        quality_metrics: Dict[str, Any]
+
+    @router.post("/remove-noise", response_model=NoiseRemovalResponse)
+    async def remove_background_noise_endpoint(
+        file: UploadFile = File(...),
+        config: NoiseRemovalRequest = Form(...)
+    ):
+        """Remove background noise from uploaded audio file"""
+        try:
+            # Save uploaded file
+            job_id = str(uuid.uuid4())
+            temp_path = f"/tmp/audio_{job_id}.wav"
+            
+            with open(temp_path, "wb") as f:
+                content = await file.read()
+                f.write(content)
+            
+            # Load audio
+            audio_data, sample_rate = librosa.load(temp_path, sr=None)
+            
+            # Apply noise removal
+            result = await audio_service.remove_background_noise(
+                audio_data=audio_data,
+                sample_rate=sample_rate,
+                method=config.method,
+                strength=config.strength,
+                preserve_speech=config.preserve_speech,
+                auto_detect_method=config.auto_detect_method
+            )
+            
+            # Save processed audio
+            output_path = f"/tmp/denoised_{job_id}.wav"
+            sf.write(output_path, result['denoised_audio'], sample_rate)
+            
+            return NoiseRemovalResponse(
+                job_id=job_id,
+                status="completed",
+                method_used=result['method_used'],
+                snr_improvement=result['quality_improvement']['snr_improvement'],
+                processing_time=result['processing_time'],
+                quality_metrics=result['noise_reduction_metrics']
+            )
+            
+        except Exception as e:
+            logger.exception(f"Error in noise removal endpoint: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
