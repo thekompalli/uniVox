@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import tempfile
 from pathlib import Path
 import soundfile as sf
+import os
 
 from src.config.app_config import app_config, model_config
 from src.models.triton_client import TritonClient, TritonModelWrapper
@@ -23,6 +24,8 @@ class SpeakerInference:
     
     def __init__(self, triton_client: Optional[TritonClient] = None):
         self.model = None
+        self.onnx_session = None
+        self.use_onnx = False
         self.triton_client = triton_client
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.executor = ThreadPoolExecutor(max_workers=2)
@@ -35,12 +38,33 @@ class SpeakerInference:
         try:
             logger.info("Initializing WeSpeaker model")
             
-            # Try to load WeSpeaker model
+            # PRIORITY 1: Check for manually downloaded ONNX model
+            onnx_path = os.path.expanduser('~/.wespeaker/english/voxceleb_resnet221_LM.onnx')
+            
+            if os.path.exists(onnx_path):
+                try:
+                    import onnxruntime as ort
+                    logger.info(f"Loading manually downloaded ONNX model from {onnx_path}")
+                    
+                    # Load ONNX model
+                    self.onnx_session = ort.InferenceSession(
+                        onnx_path,
+                        providers=['CPUExecutionProvider']  # Use CPU for stability
+                    )
+                    self.use_onnx = True
+                    self.model = None
+                    
+                    logger.info("ONNX WeSpeaker model loaded successfully")
+                    return
+                    
+                except Exception as onnx_error:
+                    logger.error(f"Failed to load ONNX model: {onnx_error}")
+                    # Continue to try other methods
+            
+            # PRIORITY 2: Try to load WeSpeaker model normally
             try:
                 import wespeaker
-                # Normalize config value; wespeaker expects a language key like 'english' or 'chinese'
                 cfg_val = str(getattr(model_config, 'wespeaker_model', 'english')).strip().lower()
-                # Map common model identifiers to a supported language
                 alias_map = {
                     'voxceleb_resnet34': 'english',
                     'voxceleb_resnet34_lm': 'english',
@@ -53,14 +77,12 @@ class SpeakerInference:
                 try:
                     self.model = wespeaker.load_model(lang)
                 except Exception as e:
-                    # If an unsupported language was provided, fall back to english
                     if 'Unsupported lang' in str(e) or 'unsupported' in str(e).lower():
                         logger.warning(f"WeSpeaker load_model({lang}) failed, falling back to 'english'")
                         self.model = wespeaker.load_model('english')
                     else:
                         raise
 
-                # Set device if the API exposes a method; otherwise try .to()
                 use_cuda = torch.cuda.is_available()
                 if hasattr(self.model, 'set_gpu'):
                     self.model.set_gpu(use_cuda)
@@ -70,12 +92,12 @@ class SpeakerInference:
                     try:
                         self.model = self.model.to('cuda' if use_cuda else 'cpu')
                     except Exception:
-                        pass  # Some wrappers may not support .to
+                        pass
 
                 logger.info("WeSpeaker model loaded successfully")
                 
             except ImportError:
-                logger.warning("WeSpeaker not available, using alternative approach")
+                logger.warning("WeSpeaker not available, trying alternative")
                 self._initialize_alternative_model()
             
         except Exception as e:
@@ -124,7 +146,6 @@ class SpeakerInference:
             Speaker embedding vector
         """
         try:
-            # Run embedding extraction in thread pool
             embedding = await asyncio.get_event_loop().run_in_executor(
                 self.executor,
                 self.extract_embedding_sync,
@@ -136,7 +157,6 @@ class SpeakerInference:
             
         except Exception as e:
             logger.exception(f"Error extracting embedding: {e}")
-            # Return zero embedding as fallback
             return np.zeros(256)
     
     def extract_embedding_sync(
@@ -146,17 +166,21 @@ class SpeakerInference:
     ) -> np.ndarray:
         """Synchronous embedding extraction"""
         try:
+            # Use ONNX model if available
+            if self.use_onnx and self.onnx_session:
+                return self._extract_onnx_embedding(audio_data, sample_rate)
+            
+            # Fallback
             if isinstance(self.model, str) and self.model == "fallback":
                 return self._extract_mfcc_embedding(audio_data, sample_rate)
             
             # Ensure minimum length
-            min_samples = int(0.5 * sample_rate)  # 0.5 second minimum
+            min_samples = int(0.5 * sample_rate)
             if len(audio_data) < min_samples:
-                # Pad with zeros
                 padding = min_samples - len(audio_data)
                 audio_data = np.pad(audio_data, (0, padding), mode='constant')
             
-            # Resample to 16kHz if needed (typical requirement)
+            # Resample to 16kHz if needed
             if sample_rate != 16000:
                 import librosa
                 audio_data = librosa.resample(
@@ -168,18 +192,67 @@ class SpeakerInference:
             
             # Extract embedding based on available model
             if hasattr(self.model, 'extract_embedding'):
-                # WeSpeaker model
                 return self._extract_wespeaker_embedding(audio_data, sample_rate)
             elif hasattr(self.model, 'encode_batch'):
-                # SpeechBrain model
                 return self._extract_speechbrain_embedding(audio_data, sample_rate)
             else:
-                # Fallback to MFCC
                 return self._extract_mfcc_embedding(audio_data, sample_rate)
                 
         except Exception as e:
             logger.exception(f"Error in synchronous embedding extraction: {e}")
             return np.zeros(256)
+    
+    def _extract_onnx_embedding(
+        self,
+        audio_data: np.ndarray,
+        sample_rate: int
+    ) -> np.ndarray:
+        """Extract embedding using ONNX model"""
+        try:
+            # Resample to 16kHz if needed
+            if sample_rate != 16000:
+                import librosa
+                audio_data = librosa.resample(
+                    audio_data,
+                    orig_sr=sample_rate,
+                    target_sr=16000
+                )
+            
+            # Ensure minimum length (0.5 seconds)
+            min_samples = 8000  # 0.5 seconds at 16kHz
+            if len(audio_data) < min_samples:
+                audio_data = np.pad(audio_data, (0, min_samples - len(audio_data)))
+            
+            # Prepare input (float32, add batch dimension)
+            audio_input = audio_data.astype(np.float32)
+            audio_input = np.expand_dims(audio_input, axis=0)
+            
+            # Get input name
+            input_name = self.onnx_session.get_inputs()[0].name
+            
+            # Run ONNX inference
+            ort_inputs = {input_name: audio_input}
+            ort_outs = self.onnx_session.run(None, ort_inputs)
+            
+            # Get embedding (first output)
+            embedding = ort_outs[0].flatten()
+            
+            # Ensure 256 dimensions
+            if len(embedding) > 256:
+                embedding = embedding[:256]
+            elif len(embedding) < 256:
+                embedding = np.pad(embedding, (0, 256 - len(embedding)))
+            
+            # L2 normalize
+            norm = np.linalg.norm(embedding)
+            if norm > 0:
+                embedding = embedding / norm
+            
+            return embedding
+            
+        except Exception as e:
+            logger.exception(f"Error in ONNX embedding extraction: {e}")
+            return self._extract_mfcc_embedding(audio_data, 16000)
     
     def _extract_wespeaker_embedding(
         self,
@@ -188,7 +261,6 @@ class SpeakerInference:
     ) -> np.ndarray:
         """Extract embedding using WeSpeaker"""
         try:
-            # Create temporary file
             with tempfile.NamedTemporaryFile(
                 suffix='.wav',
                 dir=self.temp_dir,
@@ -196,29 +268,20 @@ class SpeakerInference:
             ) as temp_file:
                 temp_path = Path(temp_file.name)
                 
-                # Save audio to temporary file
                 sf.write(temp_path, audio_data, sample_rate)
-                
-                # Extract embedding
                 embedding = self.model.extract_embedding(str(temp_path))
-                
-                # Clean up temp file
                 temp_path.unlink(missing_ok=True)
                 
-                # Ensure embedding is numpy array
                 if torch.is_tensor(embedding):
                     embedding = embedding.cpu().numpy()
                 
-                # Normalize embedding
                 embedding = embedding.flatten()
                 if len(embedding) != 256:
-                    # Resize to standard size
                     if len(embedding) > 256:
                         embedding = embedding[:256]
                     else:
                         embedding = np.pad(embedding, (0, 256 - len(embedding)))
                 
-                # L2 normalize
                 norm = np.linalg.norm(embedding)
                 if norm > 0:
                     embedding = embedding / norm
@@ -236,22 +299,18 @@ class SpeakerInference:
     ) -> np.ndarray:
         """Extract embedding using SpeechBrain"""
         try:
-            # Convert to tensor
             audio_tensor = torch.from_numpy(audio_data).float().unsqueeze(0)
             
-            # Extract embedding
             with torch.no_grad():
                 embeddings = self.model.encode_batch(audio_tensor)
                 embedding = embeddings.squeeze().cpu().numpy()
             
-            # Ensure correct size
             if len(embedding) != 256:
                 if len(embedding) > 256:
                     embedding = embedding[:256]
                 else:
                     embedding = np.pad(embedding, (0, 256 - len(embedding)))
             
-            # L2 normalize
             norm = np.linalg.norm(embedding)
             if norm > 0:
                 embedding = embedding / norm
@@ -271,7 +330,6 @@ class SpeakerInference:
         try:
             import librosa
             
-            # Extract MFCC features
             mfccs = librosa.feature.mfcc(
                 y=audio_data,
                 sr=sample_rate,
@@ -281,32 +339,25 @@ class SpeakerInference:
                 win_length=400
             )
             
-            # Statistical pooling (mean and std)
             mfcc_mean = np.mean(mfccs, axis=1)
             mfcc_std = np.std(mfccs, axis=1)
-            
-            # Combine mean and std
             basic_embedding = np.concatenate([mfcc_mean, mfcc_std])
             
-            # Expand to 256 dimensions using delta and delta-delta
             delta_mfcc = librosa.feature.delta(mfccs)
             delta2_mfcc = librosa.feature.delta(mfccs, order=2)
             
             delta_mean = np.mean(delta_mfcc, axis=1)
             delta_std = np.mean(delta2_mfcc, axis=1)
             
-            # Combine all features
             extended_embedding = np.concatenate([
                 basic_embedding, delta_mean, delta_std
             ])
             
-            # Pad or truncate to 256 dimensions
             if len(extended_embedding) > 256:
                 embedding = extended_embedding[:256]
             else:
                 embedding = np.pad(extended_embedding, (0, 256 - len(extended_embedding)))
             
-            # L2 normalize
             norm = np.linalg.norm(embedding)
             if norm > 0:
                 embedding = embedding / norm
@@ -317,6 +368,7 @@ class SpeakerInference:
             logger.exception(f"Error in MFCC embedding extraction: {e}")
             return np.zeros(256)
     
+    # Keep all other methods unchanged from original code
     async def extract_batch_embeddings(
         self,
         audio_segments: List[np.ndarray],
@@ -324,7 +376,6 @@ class SpeakerInference:
     ) -> List[np.ndarray]:
         """Extract embeddings for multiple audio segments"""
         try:
-            # Process segments in parallel
             tasks = []
             for segment in audio_segments:
                 task = self.extract_embedding(segment, sample_rate)
@@ -332,7 +383,6 @@ class SpeakerInference:
             
             embeddings = await asyncio.gather(*tasks, return_exceptions=True)
             
-            # Handle exceptions
             processed_embeddings = []
             for i, embedding in enumerate(embeddings):
                 if isinstance(embedding, Exception):
@@ -354,7 +404,6 @@ class SpeakerInference:
     ) -> float:
         """Calculate cosine similarity between embeddings"""
         try:
-            # Ensure embeddings are normalized
             norm1 = np.linalg.norm(embedding1)
             norm2 = np.linalg.norm(embedding2)
             
@@ -364,7 +413,6 @@ class SpeakerInference:
             embedding1_norm = embedding1 / norm1
             embedding2_norm = embedding2 / norm2
             
-            # Calculate cosine similarity
             similarity = np.dot(embedding1_norm, embedding2_norm)
             
             return float(np.clip(similarity, -1.0, 1.0))
@@ -421,16 +469,11 @@ class SpeakerInference:
             
             embeddings_array = np.array(embeddings)
             
-            # Determine number of clusters
             if n_speakers is None:
-                # Use hierarchical clustering to estimate
                 distances = sch.distance.pdist(embeddings_array, metric='cosine')
                 linkage_matrix = sch.linkage(distances, method='ward')
-                
-                # Find optimal number of clusters using dendrogram
                 n_speakers = min(len(embeddings), self._estimate_clusters(linkage_matrix))
             
-            # Perform clustering
             if n_speakers == 1:
                 labels = [0] * len(embeddings)
                 silhouette_score = 0.0
@@ -443,7 +486,6 @@ class SpeakerInference:
                 
                 labels = clusterer.fit_predict(embeddings_array)
                 
-                # Calculate silhouette score
                 try:
                     from sklearn.metrics import silhouette_score
                     silhouette_score = silhouette_score(embeddings_array, labels)
@@ -467,19 +509,16 @@ class SpeakerInference:
     def _estimate_clusters(self, linkage_matrix: np.ndarray, max_clusters: int = 10) -> int:
         """Estimate optimal number of clusters from linkage matrix"""
         try:
-            # Simple heuristic: find the largest gap in distances
             distances = linkage_matrix[:, 2]
             
             if len(distances) < 2:
                 return 1
             
-            # Calculate gaps between consecutive distances
             gaps = np.diff(sorted(distances, reverse=True))
             
             if len(gaps) == 0:
                 return 1
             
-            # Find the largest gap
             max_gap_idx = np.argmax(gaps)
             estimated_clusters = min(max_gap_idx + 2, max_clusters)
             
@@ -491,11 +530,14 @@ class SpeakerInference:
     
     def get_model_info(self) -> Dict[str, Any]:
         """Get speaker model information"""
-        model_type = "unknown"
-        if isinstance(self.model, str):
+        if self.use_onnx:
+            model_type = "ONNX WeSpeaker"
+        elif isinstance(self.model, str):
             model_type = self.model
         elif hasattr(self.model, '__class__'):
             model_type = self.model.__class__.__name__
+        else:
+            model_type = "unknown"
         
         return {
             'model_type': model_type,
@@ -507,6 +549,7 @@ class SpeakerInference:
         }
 
 
+# Keep TritonSpeakerInference unchanged
 class TritonSpeakerInference(TritonModelWrapper):
     """Triton-based speaker inference wrapper"""
     
@@ -525,26 +568,20 @@ class TritonSpeakerInference(TritonModelWrapper):
     ) -> np.ndarray:
         """Extract speaker embedding using Triton server"""
         try:
-            # Prepare inputs
             inputs = {
                 'audio': audio_data.astype(np.float32),
                 'sample_rate': np.array([sample_rate], dtype=np.int32)
             }
             
-            # Run inference
             results = await self.predict(inputs)
-            
-            # Extract embedding
             embedding = results['embedding'].flatten()
             
-            # Ensure correct size and normalize
             if len(embedding) != 256:
                 if len(embedding) > 256:
                     embedding = embedding[:256]
                 else:
                     embedding = np.pad(embedding, (0, 256 - len(embedding)))
             
-            # L2 normalize
             norm = np.linalg.norm(embedding)
             if norm > 0:
                 embedding = embedding / norm

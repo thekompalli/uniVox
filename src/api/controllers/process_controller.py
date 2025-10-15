@@ -65,11 +65,21 @@ class ProcessController:
                 if audio_file.size > app_config.max_file_size:
                     raise HTTPException(400, f"File too large. Max size: {app_config.max_file_size} bytes")
                 
-                # Parse parameters
+               # Parse parameters
                 language_list = [lang.strip() for lang in languages.split(',')]
-                gallery_list = None
-                if speaker_gallery:
-                    gallery_list = [spk.strip() for spk in speaker_gallery.split(',')]
+
+                # Automatically use all enrolled speakers from gallery
+                from src.services.speaker_service import SpeakerIdentificationService
+                temp_speaker_service = SpeakerIdentificationService()
+                gallery_info = await temp_speaker_service.get_gallery_info()
+                gallery_list = gallery_info.get('speakers', []) if gallery_info.get('total_speakers', 0) > 0 else None
+
+                if gallery_list:
+                    logger.info(f"Auto-loaded speaker gallery with {len(gallery_list)} speakers: {', '.join(gallery_list)}")
+                else:
+                    logger.info("No speakers in gallery, speaker identification will be skipped")
+                
+                    
                 
                 # Create request
                 request = ProcessRequest(
